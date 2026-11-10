@@ -631,7 +631,7 @@ function resetPassword() {
           <div v-if="error" class="banner error" role="alert">{{ error }}</div>
           <label>Datum<input v-model="editing.date" type="date" required :disabled="busy" :min="month + '-01'" :max="lastDate"></label>
           <fieldset class="form-grid" :disabled="busy">
-            <label v-for="[key, label, unit] in fields" :key="key">{{ label }} ({{ unit }})
+            <label v-for="[key, label, unit] in fields" :key="key">{{ label }}
               <span class="currency-field">
                 <span v-if="editing[key] && unit === '€'" class="currency-prefix" aria-hidden="true">€</span>
                 <input :value="editing[key]" :class="{ 'unit-input': editing[key] && unit !== '€' }" type="text" inputmode="decimal" :placeholder="unit === '€' ? '€ 0,00' : '0,00 ' + unit" @input="maskDecimal($event, editing, key)" @blur="finishDecimal(editing, key)">
