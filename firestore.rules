@@ -66,13 +66,32 @@ service cloud.firestore {
         request.resource.data.level == get(/databases/$(database)/documents/profiles/$(uid)).data.level &&
         request.resource.data.level in [1,2,3,4] &&
         request.resource.data.rates == get(/databases/$(database)/documents/settings/rates).data;
+      allow update: if validDeclarationTransition(uid);
       match /entries/{day} {
         allow read: if role('beheerder') || trainer(uid);
-        allow delete: if trainer(uid);
-        allow create, update: if trainer(uid) &&
-          existsAfter(/databases/$(database)/documents/profiles/$(uid)/months/$(month)) &&
+        allow delete: if trainer(uid) && editableDeclaration(uid, month);
+        allow create, update: if trainer(uid) && editableDeclaration(uid, month) &&
           day.matches('0[1-9]|[12][0-9]|3[01]') && validEntry(request.resource.data, month, day);
       }
+    }
+    function editableDeclaration(uid, month) {
+      return getAfter(/databases/$(database)/documents/profiles/$(uid)/months/$(month))
+        .data.get('status', 'concept') in ['concept', 'rejected'];
+    }
+    function validDeclarationTransition(uid) {
+      let previous = resource.data.get('status', 'concept');
+      let next = request.resource.data.status;
+      let note = request.resource.data.rejectionNote;
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'rejectionNote']) &&
+        (next == 'rejected'
+          ? note is string && note.size() <= 1000 && note.matches('(?s).*\\S.*')
+          : note == '') &&
+        ((trainer(uid) &&
+          ((previous in ['concept', 'rejected'] && next == 'submitted') ||
+            (previous == 'submitted' && next == 'concept'))) ||
+          (role('beheerder') &&
+            ((previous == 'submitted' && next in ['approved', 'rejected']) ||
+              (previous in ['approved', 'rejected'] && next == 'submitted'))));
     }
     function validEntry(data, month, day) {
       return data.keys().hasOnly(['date','prep','training','guidance','kilometers','expenses','notes']) &&

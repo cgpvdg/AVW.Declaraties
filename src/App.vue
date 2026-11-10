@@ -21,6 +21,10 @@ const uid = ref('')
 const month = ref(today().slice(0, 7))
 const records = ref([])
 const sheet = ref(null)
+const rejectionDraft = ref(null)
+const declarationStatuses = { concept: 'Concept', submitted: 'Ingediend', approved: 'Goedgekeurd', rejected: 'Afgewezen' }
+const declarationStatus = computed(() => sheet.value?.status ?? 'concept')
+const canEditEntries = computed(() => !isAdmin.value && ['concept', 'rejected'].includes(declarationStatus.value))
 const entryDialog = ref(null)
 const rateDraft = ref(formatRates(initialRates))
 const editing = ref(null)
@@ -161,7 +165,7 @@ const yearMonths = computed(() => {
   const months = new Map()
   for (const item of annualMonths.value) {
     if (!item.period.startsWith(annualYear.value + '-')) continue
-    const monthly = months.get(item.period) ?? { period: item.period, units: [0, 0, 0, 0, 0], total: 0 }
+    const monthly = months.get(item.period) ?? { period: item.period, status: item.status, units: [0, 0, 0, 0, 0], total: 0 }
     item.units.forEach((value, index) => { monthly.units[index] += value })
     monthly.total += item.total
     months.set(item.period, monthly)
@@ -188,8 +192,8 @@ watch([panel, account, isAdmin], async ([destination, user, admin], _, onCleanup
     const months = await Promise.all(headers.flatMap(snapshot => snapshot.docs).map(async header => {
       const entries = await getDocs(collection(header.ref, 'entries'))
       if (entries.empty) return null
-      const { rates, level } = header.data()
-      return { period: header.id, ...summarize(entries.docs.map(entry => entry.data()), rates, level) }
+      const { rates, level, status = 'concept' } = header.data()
+      return { period: header.id, status, ...summarize(entries.docs.map(entry => entry.data()), rates, level) }
     }))
     if (!active) return
     annualMonths.value = months.filter(Boolean).sort((a, b) => b.period.localeCompare(a.period))
@@ -282,9 +286,9 @@ watch([panel, month, isAdmin], async ([destination, period, admin], _, onCleanup
     const rows = await Promise.all(declarationTrainers.value.map(async trainer => {
       const target = monthRef(trainer.id, period)
       const header = (await getDoc(target)).data()
-      if (!header) return { trainer, total: 0 }
+      if (!header) return { trainer, total: 0, status: 'concept' }
       const entries = await getDocs(collection(target, 'entries'))
-      return { trainer, total: summarize(entries.docs.map(entry => entry.data()), header.rates, header.level).total }
+      return { trainer, status: header.status ?? 'concept', total: summarize(entries.docs.map(entry => entry.data()), header.rates, header.level).total }
     }))
     if (active) overviewRows.value = rows
   } catch (failure) {
@@ -298,6 +302,7 @@ watch([panel, month, isAdmin], async ([destination, period, admin], _, onCleanup
 async function loadMonth() {
   const version = ++readVersion
   editing.value = null
+  rejectionDraft.value = null
   records.value = []
   sheet.value = null
   reading.value = false
@@ -314,7 +319,9 @@ async function loadMonth() {
     console.error(failure)
   } finally { if (version === readVersion) reading.value = false }
 }
-watch([uid, month], loadMonth)
+watch([uid, month, panel], ([, , destination]) => {
+  if (destination === 'declarations') loadMonth()
+})
 watch(entryDialog, dialog => dialog?.showModal(), { flush: 'post' })
 function changeMonth(offset) {
   const date = new Date((month.value || today().slice(0, 7)) + '-01T00:00:00Z')
@@ -347,12 +354,42 @@ function finishDecimal(draft, key) {
   else draft[key] = ''
 }
 function openEntry(row) {
+  if (!canEditEntries.value) return
   error.value = ''
   editing.value = row ? { ...row, original: row.date } : {
     date: today().startsWith(month.value + '-') ? today() : month.value + '-01',
     notes: '',
   }
   for (const [key] of fields) editing.value[key] = row ? formatDecimal(row[key]) : ''
+}
+function changeDeclarationStatus(status) {
+  const previous = declarationStatus.value
+  const rejectionNote = status === 'rejected' ? rejectionDraft.value?.trim() : ''
+  if (status === 'rejected' && !rejectionNote) {
+    error.value = 'Vul een reden voor de afwijzing in.'
+    return
+  }
+  const target = monthRef(uid.value, month.value)
+  return action(async () => {
+    try {
+      await runTransaction(db, async tx => {
+        const header = await tx.get(target)
+        if (!header.exists() || (header.data().status ?? 'concept') !== previous) {
+          throw { userMessage: 'De declaratiestatus is gewijzigd. Het overzicht is vernieuwd.' }
+        }
+        tx.update(target, { status, rejectionNote })
+      })
+    } catch (failure) {
+      if (failure.userMessage) await loadMonth()
+      if (failure.code === 'permission-denied') {
+        await loadMonth()
+        throw { userMessage: 'Firestore weigert deze statuswijziging. Laat de beheerder de accorderingsregels controleren.' }
+      }
+      throw failure
+    }
+    await loadMonth()
+    notice.value = 'Declaratiestatus bijgewerkt.'
+  }, 'De declaratiestatus kon niet worden bijgewerkt.')
 }
 function saveEntry() {
   const { original, ...row } = editing.value
@@ -534,7 +571,7 @@ function resetPassword() {
             <h2 :class="isAdmin ? 'overview-heading' : 'eyebrow month-caption'">{{ isAdmin ? 'Vergoeding per maand' : 'Per maand' }}</h2>
             <ul class="entry-list" :class="{ 'year-month-list': !isAdmin }">
               <li v-for="item in yearMonths" :key="item.period" class="annual-month">
-                <button type="button" class="secondary annual-month-link" @click="month = item.period; navigate(isAdmin ? 'overview' : 'declarations')">
+                <button type="button" class="secondary annual-month-link" :class="!isAdmin && 'declaration-' + item.status" @click="month = item.period; navigate(isAdmin ? 'overview' : 'declarations')">
                   <strong>{{ monthName.format(new Date(item.period + '-01T00:00:00Z')) }}</strong>
                   <span v-if="!isAdmin">{{ (item.units[0] + item.units[1] + item.units[2]).toLocaleString('nl-NL') }} uur</span>
                   <strong>{{ euro.format(item.total) }}</strong>
@@ -564,8 +601,8 @@ function resetPassword() {
             <h2 class="overview-heading">Vergoeding per trainer</h2>
             <p v-if="!overviewRows.length" class="empty">Er zijn nog geen trainers.</p>
             <ul v-else class="entry-list">
-              <li v-for="{ trainer, total } in overviewRows" :key="trainer.id" class="annual-month">
-                <button type="button" class="secondary annual-month-link" @click="uid = trainer.id; navigate('declarations')">
+              <li v-for="{ trainer, total, status } in overviewRows" :key="trainer.id" class="annual-month">
+                <button type="button" class="secondary annual-month-link" :class="'declaration-' + status" @click="uid = trainer.id; navigate('declarations')">
                   <strong>{{ trainer.name }}</strong>
                   <strong>{{ euro.format(total) }}</strong>
                 </button>
@@ -610,8 +647,30 @@ function resetPassword() {
         </section>
         <p v-if="reading" role="status">Declaratie laden…</p>
         <template v-else>
+          <section v-if="uid && month" class="card declaration-status" :class="'declaration-' + declarationStatus" aria-label="Declaratiestatus">
+            <div class="section-header">
+              <strong>{{ declarationStatuses[declarationStatus] }}</strong>
+              <div class="form-actions">
+                <button v-if="canEditEntries && records.length" type="button" class="primary" :disabled="busy" @click="changeDeclarationStatus('submitted')">Declaratie indienen</button>
+                <button v-if="!isAdmin && declarationStatus === 'submitted'" type="button" class="secondary" :disabled="busy" @click="changeDeclarationStatus('concept')">Indiening intrekken</button>
+                <template v-if="isAdmin && declarationStatus === 'submitted'">
+                  <button type="button" class="secondary declaration-approved" :disabled="busy" @click="changeDeclarationStatus('approved')">Goedkeuren</button>
+                  <button type="button" class="secondary danger declaration-rejected" :disabled="busy" @click="rejectionDraft = ''">Afwijzen</button>
+                </template>
+                <button v-if="isAdmin && ['approved', 'rejected'].includes(declarationStatus)" type="button" class="secondary" :disabled="busy" @click="changeDeclarationStatus('submitted')">{{ declarationStatus === 'approved' ? 'Goedkeuring intrekken' : 'Afwijzing intrekken' }}</button>
+              </div>
+            </div>
+            <p v-if="declarationStatus === 'rejected'" class="notes">{{ sheet.rejectionNote }}</p>
+            <form v-if="isAdmin && declarationStatus === 'submitted' && rejectionDraft !== null" class="settings" @submit.prevent="changeDeclarationStatus('rejected')">
+              <label>Reden voor afwijzing<textarea v-model="rejectionDraft" maxlength="1000" required :disabled="busy"></textarea></label>
+              <div class="form-actions">
+                <button class="primary" :disabled="busy || !rejectionDraft.trim()">Afwijzing opslaan</button>
+                <button type="button" class="secondary" :disabled="busy" @click="rejectionDraft = null">Annuleren</button>
+              </div>
+            </form>
+          </section>
           <DeclarationTotals :totals="totals" compact-labels />
-          <button v-if="!isAdmin" class="primary add-declaration" :disabled="!month || busy" @click="openEntry()">Declaratie toevoegen</button>
+          <button v-if="canEditEntries" class="primary add-declaration" :disabled="!month || busy" @click="openEntry()">Declaratie toevoegen</button>
           <section class="card entries">
             <div class="section-header">
               <div><span class="eyebrow month-caption">{{ caption }}</span></div>
@@ -623,7 +682,7 @@ function resetPassword() {
                   <div class="metrics"><span v-for="[key, label, unit] in fields" :key="key" v-show="row[key]">{{ label }} · {{ unit === '€' ? euro.format(row[key]) : row[key].toLocaleString('nl-NL') + ' ' + unit }}</span></div>
                   <p v-if="row.notes" class="notes">{{ row.notes }}</p>
                 </div>
-                <button v-if="!isAdmin" class="secondary" :disabled="busy" aria-label="Declaratie bewerken" @click="openEntry(row)"><EditIcon /></button>
+                <button v-if="canEditEntries" class="secondary" :disabled="busy" aria-label="Declaratie bewerken" @click="openEntry(row)"><EditIcon /></button>
               </li>
             </ul>
           </section>

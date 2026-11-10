@@ -33,6 +33,11 @@ button:disabled { opacity: .55; cursor: default; }
 .error { background: #fbe7eb; color: #8e1d2d; }
 .success { background: #e2f3e9; color: #235940; }
 .period { display: grid; gap: 10px; margin-bottom: 12px; }
+.declaration-status { margin-bottom: 12px; }
+.declaration-status form { margin-top: 12px; }
+.declaration-submitted, .secondary.declaration-submitted:hover:not(:disabled) { background: #fff3b0; border-color: #e1c85a; }
+.declaration-approved, .secondary.declaration-approved:hover:not(:disabled) { background: #dcf5e5; border-color: #8acaa1; }
+.declaration-rejected, .secondary.declaration-rejected:hover:not(:disabled) { background: #fde5e5; border-color: #e2a1a1; }
 
 .month-picker { display: flex; gap: 5px; }
 .summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-bottom: 12px; }
