@@ -108,6 +108,14 @@ dialog::backdrop { background: #15292d80; }
 .trainer-list > li:first-child { border-top: 0; }
 
 .year-month-list > li { border-top: 0; }
+.year-month-list .annual-month-link {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr);
+}
+.year-month-list .annual-month-link > :nth-child(n+2) {
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
 
 .month-caption { margin-bottom: 0; }
 .declaration-list { margin-top: 6px; }

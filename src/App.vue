@@ -165,7 +165,7 @@ const yearMonths = computed(() => {
     monthly.total += item.total
     months.set(item.period, monthly)
   }
-  return isAdmin.value ? [...months.values()] : [...months.values()].reverse()
+  return [...months.values()]
 })
 const annualTotals = computed(() => yearMonths.value.reduce((sum, item) => {
   item.units.forEach((value, index) => { sum.units[index] += value })
