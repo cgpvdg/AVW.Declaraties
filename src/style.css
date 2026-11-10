@@ -1,10 +1,11 @@
 * { box-sizing: border-box; }
 :root { color: var(--ink); background: #f5f8f8; font-family: 'Segoe UI', system-ui, sans-serif; font-synthesis: none; --accent: #2b64b1; --ink: #172126; --primary-hover: #e9da00; --line: #dbe2e3; }
 body { margin: 0; font-size: .9375rem; line-height: 1.45; }
-.topbar { background: white; border-bottom: 1px solid var(--line); }
+#app { display: flex; flex-direction: column; min-height: 100vh; min-height: 100dvh; }
+.topbar { position: sticky; top: 0; z-index: 2; background: white; border-bottom: 1px solid var(--line); }
 .top-inner { padding: 6px 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 56px; }
 .topbar img { width: 124px; height: auto; }
-main { min-height: calc(100svh - 104px); padding: 18px 14px 28px; }
+main { flex: 1; padding: 18px 14px 28px; }
 footer { text-align: center; padding: 14px; color: #526166; font-size: .85rem; }
 h1, h2, p { margin: 0; }
 h1 { font-size: clamp(1.375rem, 3vw, 1.625rem); letter-spacing: -.025em; line-height: 1.2; }
