@@ -651,7 +651,7 @@ function resetPassword() {
             <div class="section-header">
               <strong>{{ declarationStatuses[declarationStatus] }}</strong>
               <div class="form-actions">
-                <button v-if="canEditEntries && records.length" type="button" class="primary" :disabled="busy" @click="changeDeclarationStatus('submitted')">Declaratie indienen</button>
+                <button v-if="canEditEntries && records.length" type="button" class="secondary" :disabled="busy" @click="changeDeclarationStatus('submitted')">Declaratie indienen</button>
                 <button v-if="!isAdmin && declarationStatus === 'submitted'" type="button" class="secondary" :disabled="busy" @click="changeDeclarationStatus('concept')">Indiening intrekken</button>
                 <template v-if="isAdmin && declarationStatus === 'submitted'">
                   <button type="button" class="secondary declaration-approved" :disabled="busy" @click="changeDeclarationStatus('approved')">Goedkeuren</button>
