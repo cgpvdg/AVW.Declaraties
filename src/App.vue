@@ -6,6 +6,7 @@ import { auth, db } from './firebase'
 import { dateLabel, euro, fields, initialRates, monthLabel, monthName, summarize, today } from './model'
 import logo from './logo.png'
 import DeclarationTotals from './DeclarationTotals.vue'
+import EditIcon from './EditIcon.vue'
 
 const registering = ref(false)
 const registration = ref({ name: '', level: 1 })
@@ -505,7 +506,10 @@ function resetPassword() {
         <ul class="entry-list trainer-list">
           <li v-for="trainer in trainers" :key="trainer.id">
             <div><strong>{{ trainer.name }}</strong><p class="muted">{{ statusLabel(trainer) }} · Niveau {{ trainer.level ?? 'instellen' }}</p></div>
-            <button class="secondary" :disabled="busy" @click="trainerDraft = { ...trainer, level: trainer.level ?? 1, pending: trainer.status === 'pending', status: trainer.status === 'pending' ? 'active' : (trainer.status ?? 'active') }">{{ trainer.status === 'pending' ? 'Verifiëren' : 'Bewerken' }}</button>
+            <button class="secondary" :disabled="busy" :aria-label="trainer.status === 'pending' ? undefined : 'Trainer bewerken'" @click="trainerDraft = { ...trainer, level: trainer.level ?? 1, pending: trainer.status === 'pending', status: trainer.status === 'pending' ? 'active' : (trainer.status ?? 'active') }">
+              <template v-if="trainer.status === 'pending'">Verifiëren</template>
+              <EditIcon v-else />
+            </button>
             <button v-if="trainer.status === 'pending'" class="secondary danger" :disabled="busy" @click="rejectTrainer(trainer)">Afkeuren</button>
           </li>
         </ul>
@@ -619,7 +623,7 @@ function resetPassword() {
                   <div class="metrics"><span v-for="[key, label, unit] in fields" :key="key" v-show="row[key]">{{ label }} · {{ unit === '€' ? euro.format(row[key]) : row[key].toLocaleString('nl-NL') + ' ' + unit }}</span></div>
                   <p v-if="row.notes" class="notes">{{ row.notes }}</p>
                 </div>
-                <button v-if="!isAdmin" class="secondary" :disabled="busy" @click="openEntry(row)">Bewerken</button>
+                <button v-if="!isAdmin" class="secondary" :disabled="busy" aria-label="Declaratie bewerken" @click="openEntry(row)"><EditIcon /></button>
               </li>
             </ul>
           </section>
