@@ -26,7 +26,7 @@ const editing = ref(null)
 const panel = ref('declarations')
 const pageTitle = computed(() => ({
   profile: 'Profiel',
-  annual: 'Jaaroverzichten',
+  annual: 'Jaaroverzicht',
   overview: 'Maandoverzicht',
   annualAdmin: 'Jaaroverzicht',
   trainers: 'Trainers',
@@ -165,7 +165,7 @@ const yearMonths = computed(() => {
     monthly.total += item.total
     months.set(item.period, monthly)
   }
-  return [...months.values()].reverse()
+  return isAdmin.value ? [...months.values()] : [...months.values()].reverse()
 })
 const annualTotals = computed(() => yearMonths.value.reduce((sum, item) => {
   item.units.forEach((value, index) => { sum.units[index] += value })
@@ -444,7 +444,7 @@ function resetPassword() {
             <span class="menu-user">{{ profile.name }} · {{ isAdmin ? 'Beheerder' : 'Trainer' }}{{ hasTrainerRole(profile) && profile.level ? ' · Niveau ' + profile.level : '' }}</span>
             <button class="menu-profile" :aria-current="panel === 'profile' ? 'page' : undefined" :disabled="busy" @click="navigate('profile')">Profiel</button>
             <button :aria-current="panel === 'declarations' ? 'page' : undefined" :disabled="busy" @click="navigate('declarations')">Declaraties</button>
-            <button v-if="!isAdmin" :aria-current="panel === 'annual' ? 'page' : undefined" :disabled="busy" @click="navigate('annual')">Jaaroverzichten</button>
+            <button v-if="!isAdmin" :aria-current="panel === 'annual' ? 'page' : undefined" :disabled="busy" @click="navigate('annual')">Jaaroverzicht</button>
             <template v-if="isAdmin">
               <button :aria-current="panel === 'overview' ? 'page' : undefined" :disabled="busy" @click="navigate('overview')">Maandoverzicht</button>
               <button :aria-current="panel === 'annualAdmin' ? 'page' : undefined" :disabled="busy" @click="navigate('annualAdmin')">Jaaroverzicht</button>
@@ -511,8 +511,8 @@ function resetPassword() {
         </ul>
       </section>
       <template v-else-if="panel === 'annual' || panel === 'annualAdmin'">
-        <p v-if="annualLoading" role="status">Jaaroverzichten laden…</p>
-        <p v-else-if="annualError" class="banner error" role="alert">De jaaroverzichten konden niet worden geladen.</p>
+        <p v-if="annualLoading" role="status">Jaaroverzicht laden…</p>
+        <p v-else-if="annualError" class="banner error" role="alert">Het jaaroverzicht kon niet worden geladen.</p>
         <p v-else-if="!annualYears.length" class="card">{{ isAdmin ? 'Er zijn nog geen declaraties ingevoerd.' : 'Je hebt nog geen declaraties ingevoerd.' }}</p>
         <template v-else>
           <section class="card period">
@@ -527,7 +527,7 @@ function resetPassword() {
           </div>
           <DeclarationTotals v-else :totals="annualTotals" compact-labels />
           <section class="card entries">
-            <h2 :class="{ 'overview-heading': isAdmin }">{{ isAdmin ? 'Vergoeding per maand' : 'Per maand' }}</h2>
+            <h2 :class="isAdmin ? 'overview-heading' : 'eyebrow month-caption'">{{ isAdmin ? 'Vergoeding per maand' : 'Per maand' }}</h2>
             <ul class="entry-list" :class="{ 'year-month-list': !isAdmin }">
               <li v-for="item in yearMonths" :key="item.period" class="annual-month">
                 <button type="button" class="secondary annual-month-link" @click="month = item.period; navigate(isAdmin ? 'overview' : 'declarations')">
