@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { createUserWithEmailAndPassword, onAuthStateChanged, sendPasswordResetEmail, signInWithEmailAndPassword, signOut } from 'firebase/auth'
 import { collection, doc, getDoc, getDocs, runTransaction, setDoc, deleteDoc, updateDoc } from 'firebase/firestore/lite'
 import { auth, db } from './firebase'
-import { dateLabel, euro, fields, initialRates, monthLabel, summarize, today } from './model'
+import { dateLabel, euro, fields, initialRates, monthLabel, monthName, summarize, today } from './model'
 import logo from './logo.png'
 import DeclarationTotals from './DeclarationTotals.vue'
 
@@ -531,7 +531,7 @@ function resetPassword() {
             <ul class="entry-list" :class="{ 'year-month-list': !isAdmin }">
               <li v-for="item in yearMonths" :key="item.period" class="annual-month">
                 <button type="button" class="secondary annual-month-link" @click="month = item.period; navigate(isAdmin ? 'overview' : 'declarations')">
-                  <strong>{{ monthLabel.format(new Date(item.period + '-01T00:00:00Z')) }}</strong>
+                  <strong>{{ monthName.format(new Date(item.period + '-01T00:00:00Z')) }}</strong>
                   <span v-if="!isAdmin">{{ (item.units[0] + item.units[1] + item.units[2]).toLocaleString('nl-NL') }} uur</span>
                   <strong>{{ euro.format(item.total) }}</strong>
                 </button>
