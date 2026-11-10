@@ -1,0 +1,87 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function role(value) {
+      return request.auth != null &&
+        get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role == value;
+    }
+    function trainer(uid) {
+      return request.auth != null && request.auth.uid == uid &&
+        activeTrainer(get(/databases/$(database)/documents/profiles/$(uid)).data);
+    }
+    function activeTrainer(data) {
+      return (data.role == 'trainer' || (data.role == 'beheerder' && data.get('trainer', false))) &&
+        data.get('status', 'active') == 'active' && data.level in [1,2,3,4];
+    }
+    function validTrainer(data) {
+      return data.name is string && data.name.size() > 0 && data.name.size() <= 120 &&
+        data.level in [1,2,3,4] && data.status in ['active','inactive','deleted','pending'];
+    }
+    function amount(value) {
+      return value is number && value >= 0 && value <= 100000;
+    }
+    function validRate(data) {
+      return data.keys().hasOnly(['level1','level2','level3','level4','guidance','kilometers']) &&
+        amount(data.level1) && amount(data.level2) && amount(data.level3) && amount(data.level4) &&
+        amount(data.guidance) && amount(data.kilometers);
+    }
+    match /profiles/{uid} {
+      allow get: if request.auth != null && request.auth.uid == uid;
+      allow read: if role('beheerder');
+      allow create: if request.auth != null && request.auth.uid == uid &&
+        request.resource.data.role == 'trainer' && request.resource.data.status == 'pending' &&
+        request.resource.data.keys().hasOnly(['name','level','role','status']) && validTrainer(request.resource.data) &&
+        !exists(/databases/$(database)/documents/rejectedTrainers/$(uid));
+      allow delete: if role('beheerder') && resource.data.role == 'trainer' &&
+        resource.data.status == 'pending' && existsAfter(/databases/$(database)/documents/rejectedTrainers/$(uid));
+      allow update: if request.auth != null && request.auth.uid == uid &&
+        (resource.data.role == 'beheerder' || activeTrainer(resource.data)) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name','level']) &&
+        request.resource.data.name is string && request.resource.data.name.size() > 0 &&
+        request.resource.data.name.size() <= 120 &&
+        ((resource.data.role == 'beheerder' && !resource.data.get('trainer', false) &&
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['level'])) ||
+          ((resource.data.role == 'trainer' || resource.data.get('trainer', false)) &&
+            request.resource.data.level in [1,2,3,4]));
+      allow update: if role('beheerder') &&
+        (resource.data.role == 'trainer' || resource.data.get('trainer', false)) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name','level','status']) &&
+        validTrainer(request.resource.data) && request.resource.data.status != 'pending';
+    }
+    match /rejectedTrainers/{uid} {
+      allow create: if role('beheerder') && request.resource.data.keys().hasOnly(['rejected']) &&
+        request.resource.data.rejected == true &&
+        get(/databases/$(database)/documents/profiles/$(uid)).data.status == 'pending' &&
+        !existsAfter(/databases/$(database)/documents/profiles/$(uid));
+    }
+    match /settings/rates {
+      allow read: if role('beheerder') || (request.auth != null && trainer(request.auth.uid));
+      allow create, update: if role('beheerder') && validRate(request.resource.data);
+    }
+    match /profiles/{uid}/months/{month} {
+      allow read: if role('beheerder') || trainer(uid);
+      allow create: if trainer(uid) && month.matches('[0-9]{4}-(0[1-9]|1[0-2])') &&
+        request.resource.data.keys().hasOnly(['rates','name','level']) &&
+        request.resource.data.name == get(/databases/$(database)/documents/profiles/$(uid)).data.name &&
+        request.resource.data.level == get(/databases/$(database)/documents/profiles/$(uid)).data.level &&
+        request.resource.data.level in [1,2,3,4] &&
+        request.resource.data.rates == get(/databases/$(database)/documents/settings/rates).data;
+      match /entries/{day} {
+        allow read: if role('beheerder') || trainer(uid);
+        allow delete: if trainer(uid);
+        allow create, update: if trainer(uid) &&
+          existsAfter(/databases/$(database)/documents/profiles/$(uid)/months/$(month)) &&
+          day.matches('0[1-9]|[12][0-9]|3[01]') && validEntry(request.resource.data, month, day);
+      }
+    }
+    function validEntry(data, month, day) {
+      return data.keys().hasOnly(['date','prep','training','guidance','kilometers','expenses','notes']) &&
+        data.date == month + '-' + day &&
+        data.prep is number && data.training is number && data.guidance is number &&
+        data.prep >= 0 && data.training >= 0 && data.guidance >= 0 &&
+        data.prep + data.training + data.guidance <= 24 &&
+        amount(data.kilometers) && amount(data.expenses) &&
+        data.notes is string && data.notes.size() <= 1000;
+    }
+  }
+}
