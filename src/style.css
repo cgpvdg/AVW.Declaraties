@@ -35,7 +35,7 @@ button:disabled { opacity: .55; cursor: default; }
 
 .month-picker { display: flex; gap: 5px; }
 .summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-bottom: 12px; }
-.summary article { display: grid; gap: 5px; padding: 9px; }
+.summary article { text-align: center; display: grid; gap: 5px; padding: 9px; }
 .summary span { color: #526166; font-size: .74rem; }
 .summary strong { font-size: clamp(1rem, 3vw, 1.4rem); overflow-wrap: anywhere; }
 .summary .total { color: #245493; background: #fff9cb; border-color: #e9da74; }
@@ -82,7 +82,7 @@ dialog::backdrop { background: #15292d80; }
 .menu-links .menu-logo { display: block; width: 148px; max-width: 100%; margin: 0 0 12px 8px; }
 
 .overview-heading { color: var(--accent); }
-.overview-heading + .entry-list { margin-top: -6px; }
+.overview-heading + .entry-list { margin-top: 6px; }
 
 .rate-grid { grid-template-columns: minmax(0, 1fr); }
 .currency-field { position: relative; display: block; }
@@ -96,3 +96,18 @@ dialog::backdrop { background: #15292d80; }
 
 .entry-date::first-letter { text-transform: uppercase; }
 .entry-date { display: block; }
+
+.entry-list .annual-month { padding-block: 6px; }
+.annual-month-link { width: 100%; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; text-align: start; }
+
+.export-icon { width: 18px; height: 18px; vertical-align: -4px; margin-inline-end: 4px; }
+
+.overview-summary { grid-template-columns: minmax(0, 1fr); }
+
+.trainer-list { margin: 0; }
+.trainer-list > li:first-child { border-top: 0; }
+
+.year-month-list > li { border-top: 0; }
+
+.month-caption { margin-bottom: 0; }
+.declaration-list { margin-top: 6px; }

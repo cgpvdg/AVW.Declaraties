@@ -5,6 +5,7 @@ import { collection, doc, getDoc, getDocs, runTransaction, setDoc, deleteDoc, up
 import { auth, db } from './firebase'
 import { dateLabel, euro, fields, initialRates, monthLabel, summarize, today } from './model'
 import logo from './logo.png'
+import DeclarationTotals from './DeclarationTotals.vue'
 
 const registering = ref(false)
 const registration = ref({ name: '', level: 1 })
@@ -25,8 +26,11 @@ const editing = ref(null)
 const panel = ref('declarations')
 const pageTitle = computed(() => ({
   profile: 'Profiel',
+  annual: 'Jaaroverzichten',
+  overview: 'Maandoverzicht',
+  annualAdmin: 'Jaaroverzicht',
   trainers: 'Trainers',
-  rates: 'Vergoedingenstaffel',
+  rates: 'Vergoedingen',
   declarations: isAdmin.value ? 'Declaraties' : 'Mijn declaraties',
 })[panel.value])
 const menu = ref(null)
@@ -147,6 +151,57 @@ function saveTrainer() {
     notice.value = 'Trainerprofiel opgeslagen.'
   }, 'Het trainerprofiel kon niet worden opgeslagen.')
 }
+const annualMonths = ref([])
+const annualYear = ref('')
+const annualLoading = ref(false)
+const annualError = ref(false)
+const annualYears = computed(() => [...new Set(annualMonths.value.map(item => item.period.slice(0, 4)))])
+const yearMonths = computed(() => {
+  const months = new Map()
+  for (const item of annualMonths.value) {
+    if (!item.period.startsWith(annualYear.value + '-')) continue
+    const monthly = months.get(item.period) ?? { period: item.period, units: [0, 0, 0, 0, 0], total: 0 }
+    item.units.forEach((value, index) => { monthly.units[index] += value })
+    monthly.total += item.total
+    months.set(item.period, monthly)
+  }
+  return [...months.values()].reverse()
+})
+const annualTotals = computed(() => yearMonths.value.reduce((sum, item) => {
+  item.units.forEach((value, index) => { sum.units[index] += value })
+  sum.total += item.total
+  return sum
+}, { units: [0, 0, 0, 0, 0], total: 0 }))
+
+watch([panel, account, isAdmin], async ([destination, user, admin], _, onCleanup) => {
+  if (!user || destination !== (admin ? 'annualAdmin' : 'annual')) return
+  let active = true
+  onCleanup(() => { active = false })
+  annualMonths.value = []
+  annualError.value = false
+  annualLoading.value = true
+  try {
+    const owners = admin ? declarationTrainers.value.map(trainer => trainer.id) : [user.uid]
+    const headers = await Promise.all(owners.map(owner => getDocs(collection(db, 'profiles', owner, 'months'))))
+    if (!active) return
+    const months = await Promise.all(headers.flatMap(snapshot => snapshot.docs).map(async header => {
+      const entries = await getDocs(collection(header.ref, 'entries'))
+      if (entries.empty) return null
+      const { rates, level } = header.data()
+      return { period: header.id, ...summarize(entries.docs.map(entry => entry.data()), rates, level) }
+    }))
+    if (!active) return
+    annualMonths.value = months.filter(Boolean).sort((a, b) => b.period.localeCompare(a.period))
+    if (!annualYears.value.includes(annualYear.value)) annualYear.value = annualYears.value[0] ?? ''
+  } catch (failure) {
+    if (active) annualError.value = true
+    console.error(failure)
+  } finally {
+    if (active) annualLoading.value = false
+  }
+})
+
+const displayRecords = computed(() => isAdmin.value ? records.value : [...records.value].reverse())
 const totals = computed(() => summarize(records.value, sheet.value?.rates, sheet.value?.level))
 const caption = computed(() => month.value ? monthLabel.format(new Date(month.value + '-01T00:00:00Z')) : 'Kies een maand')
 const rateRef = () => doc(db, 'settings', 'rates')
@@ -209,6 +264,36 @@ if (auth) onAuthStateChanged(auth, async (user) => {
 
 const monthRef = (owner, period) => doc(db, 'profiles', owner, 'months', period)
 let readVersion = 0
+const overviewRows = ref([])
+const overviewTotal = computed(() => overviewRows.value.reduce((sum, row) => sum + row.total, 0))
+const overviewLoading = ref(false)
+const overviewError = ref(false)
+
+watch([panel, month, isAdmin], async ([destination, period, admin], _, onCleanup) => {
+  if (destination !== 'overview' || !admin) return
+  let active = true
+  onCleanup(() => { active = false })
+  overviewRows.value = []
+  overviewError.value = false
+  overviewLoading.value = Boolean(period)
+  if (!period) return
+  try {
+    const rows = await Promise.all(declarationTrainers.value.map(async trainer => {
+      const target = monthRef(trainer.id, period)
+      const header = (await getDoc(target)).data()
+      if (!header) return { trainer, total: 0 }
+      const entries = await getDocs(collection(target, 'entries'))
+      return { trainer, total: summarize(entries.docs.map(entry => entry.data()), header.rates, header.level).total }
+    }))
+    if (active) overviewRows.value = rows
+  } catch (failure) {
+    if (active) overviewError.value = true
+    console.error(failure)
+  } finally {
+    if (active) overviewLoading.value = false
+  }
+})
+
 async function loadMonth() {
   const version = ++readVersion
   editing.value = null
@@ -328,7 +413,7 @@ function saveRates() {
     await setDoc(rateRef(), rates)
     rateDraft.value = formatRates(rates)
 
-    notice.value = 'Vergoedingenstaffel opgeslagen.'
+    notice.value = 'Vergoedingen opgeslagen.'
   }, 'De staffel kon niet worden opgeslagen.')
 }
 function exportSheet() {
@@ -356,12 +441,15 @@ function resetPassword() {
         <nav class="menu-links" aria-label="Hoofdnavigatie">
           <img class="menu-logo" :src="logo" alt="AVW Atletiekvereniging Wieringermeer e.o.">
           <template v-if="profile">
-            <span class="menu-user">{{ profile.name }} · {{ isAdmin ? 'Beheerder' : 'Trainer' }}</span>
+            <span class="menu-user">{{ profile.name }} · {{ isAdmin ? 'Beheerder' : 'Trainer' }}{{ hasTrainerRole(profile) && profile.level ? ' · Niveau ' + profile.level : '' }}</span>
             <button class="menu-profile" :aria-current="panel === 'profile' ? 'page' : undefined" :disabled="busy" @click="navigate('profile')">Profiel</button>
             <button :aria-current="panel === 'declarations' ? 'page' : undefined" :disabled="busy" @click="navigate('declarations')">Declaraties</button>
+            <button v-if="!isAdmin" :aria-current="panel === 'annual' ? 'page' : undefined" :disabled="busy" @click="navigate('annual')">Jaaroverzichten</button>
             <template v-if="isAdmin">
+              <button :aria-current="panel === 'overview' ? 'page' : undefined" :disabled="busy" @click="navigate('overview')">Maandoverzicht</button>
+              <button :aria-current="panel === 'annualAdmin' ? 'page' : undefined" :disabled="busy" @click="navigate('annualAdmin')">Jaaroverzicht</button>
               <button :aria-current="panel === 'trainers' ? 'page' : undefined" :disabled="busy" @click="navigate('trainers')">Trainers</button>
-              <button :aria-current="panel === 'rates' ? 'page' : undefined" :disabled="busy" @click="navigate('rates')">Vergoedingenstaffel</button>
+              <button :aria-current="panel === 'rates' ? 'page' : undefined" :disabled="busy" @click="navigate('rates')">Vergoedingen</button>
             </template>
             <button v-if="profile.role === 'beheerder' && canTrain(profile)" :disabled="busy" @click="switchMode(isAdmin ? 'trainer' : 'beheerder')">Verder als {{ isAdmin ? 'trainer' : 'beheerder' }}</button>
           </template>
@@ -401,7 +489,6 @@ function resetPassword() {
         <button class="primary" :disabled="busy">Opslaan</button>
       </form>
       <section v-else-if="panel === 'trainers'" class="card settings">
-        <h2 class="overview-heading">Overzicht</h2>
         <form v-if="trainerDraft" class="settings" @submit.prevent="saveTrainer">
           <label>Naam<input v-model.trim="trainerDraft.name" maxlength="120" required></label>
           <label>Niveau<select v-model.number="trainerDraft.level" required>
@@ -415,7 +502,7 @@ function resetPassword() {
             <button type="button" class="secondary" :disabled="busy" @click="trainerDraft = null">Annuleren</button>
           </div>
         </form>
-        <ul class="entry-list">
+        <ul class="entry-list trainer-list">
           <li v-for="trainer in trainers" :key="trainer.id">
             <div><strong>{{ trainer.name }}</strong><p class="muted">{{ statusLabel(trainer) }} · Niveau {{ trainer.level ?? 'instellen' }}</p></div>
             <button class="secondary" :disabled="busy" @click="trainerDraft = { ...trainer, level: trainer.level ?? 1, pending: trainer.status === 'pending', status: trainer.status === 'pending' ? 'active' : (trainer.status ?? 'active') }">{{ trainer.status === 'pending' ? 'Verifiëren' : 'Bewerken' }}</button>
@@ -423,6 +510,66 @@ function resetPassword() {
           </li>
         </ul>
       </section>
+      <template v-else-if="panel === 'annual' || panel === 'annualAdmin'">
+        <p v-if="annualLoading" role="status">Jaaroverzichten laden…</p>
+        <p v-else-if="annualError" class="banner error" role="alert">De jaaroverzichten konden niet worden geladen.</p>
+        <p v-else-if="!annualYears.length" class="card">{{ isAdmin ? 'Er zijn nog geen declaraties ingevoerd.' : 'Je hebt nog geen declaraties ingevoerd.' }}</p>
+        <template v-else>
+          <section class="card period">
+            <label>
+              <select v-model="annualYear" aria-label="Jaar">
+                <option v-for="year in annualYears" :key="year" :value="year">{{ year }}</option>
+              </select>
+            </label>
+          </section>
+          <div v-if="isAdmin" class="summary overview-summary">
+            <article class="card total"><span>Totale vergoeding</span><strong>{{ euro.format(annualTotals.total) }}</strong></article>
+          </div>
+          <DeclarationTotals v-else :totals="annualTotals" compact-labels />
+          <section class="card entries">
+            <h2 :class="{ 'overview-heading': isAdmin }">{{ isAdmin ? 'Vergoeding per maand' : 'Per maand' }}</h2>
+            <ul class="entry-list" :class="{ 'year-month-list': !isAdmin }">
+              <li v-for="item in yearMonths" :key="item.period" class="annual-month">
+                <button type="button" class="secondary annual-month-link" @click="month = item.period; navigate(isAdmin ? 'overview' : 'declarations')">
+                  <strong>{{ monthLabel.format(new Date(item.period + '-01T00:00:00Z')) }}</strong>
+                  <span v-if="!isAdmin">{{ (item.units[0] + item.units[1] + item.units[2]).toLocaleString('nl-NL') }} uur</span>
+                  <strong>{{ euro.format(item.total) }}</strong>
+                </button>
+              </li>
+            </ul>
+          </section>
+        </template>
+      </template>
+      <template v-else-if="panel === 'overview'">
+        <section class="card period">
+          <label>
+            <span class="month-picker">
+              <button class="secondary" aria-label="Vorige maand" @click="changeMonth(-1)">‹</button>
+              <input v-model="month" type="month" aria-label="Maand">
+              <button class="secondary" aria-label="Volgende maand" @click="changeMonth(1)">›</button>
+            </span>
+          </label>
+        </section>
+        <p v-if="overviewLoading" role="status">Overzicht laden…</p>
+        <p v-else-if="overviewError" class="banner error" role="alert">Het overzicht kon niet worden geladen.</p>
+        <template v-else-if="month">
+          <div class="summary overview-summary">
+            <article class="card total"><span>Totale vergoeding</span><strong>{{ euro.format(overviewTotal) }}</strong></article>
+          </div>
+          <section class="card entries">
+            <h2 class="overview-heading">Vergoeding per trainer</h2>
+            <p v-if="!overviewRows.length" class="empty">Er zijn nog geen trainers.</p>
+            <ul v-else class="entry-list">
+              <li v-for="{ trainer, total } in overviewRows" :key="trainer.id" class="annual-month">
+                <button type="button" class="secondary annual-month-link" @click="uid = trainer.id; navigate('declarations')">
+                  <strong>{{ trainer.name }}</strong>
+                  <strong>{{ euro.format(total) }}</strong>
+                </button>
+              </li>
+            </ul>
+          </section>
+        </template>
+      </template>
       <form v-else-if="panel === 'rates'" class="card settings" @submit.prevent="saveRates">
         <p class="muted">De ingestelde tarieven gelden voor nieuw aangemaakte maanddeclaraties.</p>
         <fieldset :disabled="busy" class="form-grid rate-grid">
@@ -442,30 +589,32 @@ function resetPassword() {
               <option v-for="trainer in declarationTrainers" :key="trainer.id" :value="trainer.id">{{ trainer.name }}{{ trainer.status && trainer.status !== 'active' ? ' · ' + statusLabel(trainer) : '' }}</option>
             </select>
           </label>
-          <label><span v-if="!isAdmin">Declaratiemaand</span>
+          <label>
             <span class="month-picker">
               <button class="secondary" aria-label="Vorige maand" :disabled="busy" @click="changeMonth(-1)">‹</button>
               <input v-model="month" type="month" aria-label="Declaratiemaand" :disabled="busy">
               <button class="secondary" aria-label="Volgende maand" :disabled="busy" @click="changeMonth(1)">›</button>
             </span>
           </label>
-          <button class="secondary" :disabled="!sheet || reading || busy" @click="exportSheet">↓ Excel exporteren</button>
+          <button class="secondary" :disabled="!sheet || reading || busy" @click="exportSheet">
+            <svg class="export-icon" viewBox="0 0 20 20" aria-hidden="true">
+              <rect x="2" y="2" width="16" height="16" rx="3" fill="#107c41"/>
+              <path d="m6.5 6.5 7 7m0-7-7 7" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/>
+            </svg>
+            Exporteren
+          </button>
         </section>
         <p v-if="reading" role="status">Declaratie laden…</p>
         <template v-else>
-          <div class="summary">
-            <article class="card"><span>Geregistreerde uren</span><strong>{{ (totals.units[0] + totals.units[1] + totals.units[2]).toLocaleString('nl-NL') }} uur</strong></article>
-            <article class="card"><span>Afstand</span><strong>{{ totals.units[3].toLocaleString('nl-NL') }} km</strong></article>
-            <article class="card total"><span>Totale vergoeding</span><strong>{{ euro.format(totals.total) }}</strong></article>
-          </div>
+          <DeclarationTotals :totals="totals" compact-labels />
           <button v-if="!isAdmin" class="primary add-declaration" :disabled="!month || busy" @click="openEntry()">Declaratie toevoegen</button>
           <section class="card entries">
             <div class="section-header">
-              <div><span class="eyebrow">{{ caption }}</span></div>
+              <div><span class="eyebrow month-caption">{{ caption }}</span></div>
             </div>
             <p v-if="!records.length" class="empty">Voor deze maand zijn er nog geen regels.</p>
-            <ul v-else class="entry-list">
-              <li v-for="row in records" :key="row.date">
+            <ul v-else class="entry-list declaration-list">
+              <li v-for="row in displayRecords" :key="row.date">
                 <div><strong class="entry-date">{{ dateLabel.format(new Date(row.date + 'T00:00:00Z')) }}</strong>
                   <div class="metrics"><span v-for="[key, label, unit] in fields" :key="key" v-show="row[key]">{{ label }} · {{ unit === '€' ? euro.format(row[key]) : row[key].toLocaleString('nl-NL') + ' ' + unit }}</span></div>
                   <p v-if="row.notes" class="notes">{{ row.notes }}</p>
@@ -478,7 +627,7 @@ function resetPassword() {
       </template>
       <dialog v-if="editing" ref="entryDialog" aria-labelledby="entry-title" @cancel.prevent="!busy && (editing = null)">
         <form @submit.prevent="saveEntry">
-          <div class="section-header"><h2 id="entry-title">{{ editing.original ? 'Regel bewerken' : 'Toevoegen' }}</h2><button type="button" class="secondary" :disabled="busy" @click="editing = null">Sluiten</button></div>
+          <div class="section-header"><h2 id="entry-title">{{ editing.original ? 'Declaratie aanpassen' : 'Toevoegen' }}</h2><button type="button" class="secondary" :disabled="busy" @click="editing = null">Sluiten</button></div>
           <div v-if="error" class="banner error" role="alert">{{ error }}</div>
           <label>Datum<input v-model="editing.date" type="date" required :disabled="busy" :min="month + '-01'" :max="lastDate"></label>
           <fieldset class="form-grid" :disabled="busy">
