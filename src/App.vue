@@ -714,7 +714,7 @@ function resetPassword() {
           <p v-else-if="!matrixDays.length" class="card">Er zijn deze maand geen uren geregistreerd.</p>
           <template v-else>
             <ul class="matrix-legend" aria-label="Legenda urentypen">
-              <li v-for="[key, label] in hourFields" :key="key" class="matrix-badge" :data-type="key">{{ label }}</li>
+              <li v-for="[key, label] in hourFields" :key="key" class="matrix-badge hour-type" :data-type="key">{{ label }}</li>
             </ul>
             <h2 id="matrix-period" class="matrix-period">{{ caption }}</h2>
             <div class="matrix-scroll" role="region" aria-label="Urenmatrix" tabindex="0">
@@ -733,12 +733,12 @@ function resetPassword() {
                     <th scope="row">{{ profileNameParts(trainer).firstName }}</th>
                     <td v-for="day in matrixDays" :key="day.date">
                       <div v-for="hours in days.get(day.date)" :key="hours.key" class="matrix-hours">
-                        <button v-if="hours.note" type="button" class="matrix-badge matrix-note-button" :data-type="hours.key"
+                        <button v-if="hours.note" type="button" class="matrix-badge matrix-note-button hour-type" :data-type="hours.key"
                           :aria-label="`${hours.label}, ${hours.value} uur. Opmerking tonen of verbergen`"
                           :aria-expanded="selectedMatrixNote === hours"
                           @click="selectedMatrixNote = selectedMatrixNote === hours ? null : hours"
                           @keydown.esc.stop="selectedMatrixNote = null">{{ hours.value }}</button>
-                        <div v-else class="matrix-badge" :data-type="hours.key">
+                        <div v-else class="matrix-badge hour-type" :data-type="hours.key">
                           <span class="matrix-sr-only">{{ hours.label }} </span>{{ hours.value }}<span class="matrix-sr-only"> uur</span>
                         </div>
                         <p v-if="hours.note" class="matrix-note" :class="{ 'matrix-note-open': selectedMatrixNote === hours }">{{ hours.note }}</p>
@@ -838,7 +838,11 @@ function resetPassword() {
             <ul v-else class="entry-list declaration-list">
               <li v-for="row in displayRecords" :key="row.date">
                 <div><strong class="entry-date">{{ dateLabel.format(new Date(row.date + 'T00:00:00Z')) }}</strong>
-                  <div class="metrics"><span v-for="[key, label, unit] in fields" :key="key" v-show="row[key]">{{ label }} · {{ unit === '€' ? euro.format(row[key]) : row[key].toLocaleString('nl-NL') + ' ' + unit }}</span></div>
+                  <div class="metrics">
+                    <span v-for="[key, label, unit] in fields" :key="key" v-show="row[key]" :class="{ 'hour-type': unit === 'uur' }" :data-type="key">
+                      {{ label }} · {{ unit === '€' ? euro.format(row[key]) : row[key].toLocaleString('nl-NL') + ' ' + unit }}
+                    </span>
+                  </div>
                   <p v-if="row.notes" class="notes">{{ row.notes }}</p>
                 </div>
                 <button v-if="canEditEntries" class="secondary" :disabled="busy" aria-label="Declaratie bewerken" @click="openEntry(row)"><EditIcon /></button>

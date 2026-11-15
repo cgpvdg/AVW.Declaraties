@@ -43,9 +43,9 @@ button:disabled { opacity: .55; cursor: default; }
 .matrix-scroll { position: relative; max-width: 100%; overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: white; }
 .matrix-legend { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; margin: 0 0 8px; padding: 0; }
 .matrix-badge { border-radius: 6px; padding: 3px 8px; font-size: .8rem; font-weight: 650; text-align: center; }
-.matrix-badge[data-type="prep"] { background: #fce7ac; color: #674400; }
-.matrix-badge[data-type="training"] { background: #d7e8ff; color: #1c477c; }
-.matrix-badge[data-type="guidance"] { background: #d7f0df; color: #195738; }
+.hour-type[data-type="prep"] { background: #fce7ac; color: #674400; }
+.hour-type[data-type="training"] { background: #d7e8ff; color: #1c477c; }
+.hour-type[data-type="guidance"] { background: #d7f0df; color: #195738; }
 .matrix-hours + .matrix-hours { margin-top: 3px; }
 .matrix-note-button { width: 100%; min-height: 24px; text-decoration: underline dotted; text-underline-offset: 2px; }
 .matrix-note { display: none; width: min(13rem, 45vw); margin-top: 4px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: #f5f8f8; font-size: .8rem; white-space: pre-wrap; overflow-wrap: anywhere; }
