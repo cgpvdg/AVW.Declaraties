@@ -61,7 +61,7 @@ button:disabled { opacity: .55; cursor: default; }
 .matrix-period + .matrix-scroll { border-radius: 0 0 10px 10px; }
 .matrix-table th, .matrix-table td { padding: 8px 10px; border-top: 1px solid var(--line); border-right: 1px solid var(--line); vertical-align: top; }
 .matrix-table thead th { min-width: 44px; border-top: 0; background: #edf3f3; }
-.matrix-table tr > :first-child { position: sticky; left: 0; min-width: 8rem; max-width: 12rem; background: #edf3f3; text-align: left; overflow-wrap: anywhere; }
+.matrix-table tr > :first-child { position: sticky; left: 0; width: 5rem; min-width: 5rem; max-width: 5rem; padding-inline: 8px; background: #edf3f3; text-align: left; overflow-wrap: anywhere; }
 .matrix-table tr > :last-child { border-right: 0; }
 .matrix-table td { white-space: nowrap; }
 .summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-bottom: 12px; }
