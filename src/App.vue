@@ -34,6 +34,7 @@ const pageTitle = computed(() => ({
   annual: 'Jaaroverzicht',
   overview: 'Maandoverzicht',
   annualAdmin: 'Jaaroverzicht',
+  matrix: 'Matrix',
   trainers: 'Trainers',
   rates: 'Vergoedingen',
   declarations: isAdmin.value ? 'Declaraties' : 'Mijn declaraties',
@@ -206,7 +207,7 @@ watch([panel, account, isAdmin], async ([destination, user, admin], _, onCleanup
   }
 })
 
-const displayRecords = computed(() => isAdmin.value ? records.value : [...records.value].reverse())
+const displayRecords = computed(() => [...records.value].reverse())
 const totals = computed(() => summarize(records.value, sheet.value?.rates, sheet.value?.level))
 const caption = computed(() => month.value ? monthLabel.format(new Date(month.value + '-01T00:00:00Z')) : 'Kies een maand')
 const rateRef = () => doc(db, 'settings', 'rates')
@@ -333,6 +334,50 @@ const lastDate = computed(() => {
   const [year, number] = month.value.split('-').map(Number)
   return month.value + '-' + new Date(Date.UTC(year, number, 0)).getUTCDate()
 })
+const matrixWeekday = new Intl.DateTimeFormat('nl-NL', { weekday: 'short', timeZone: 'UTC' })
+const hourFields = fields.filter(([, , unit]) => unit === 'uur')
+const matrixRows = ref([])
+const matrixDays = computed(() => {
+  const dates = new Set(matrixRows.value.flatMap(({ days }) => [...days.keys()]))
+  return [...dates].filter(date => date.startsWith(month.value + '-')).sort()
+    .map(date => ({ date, number: Number(date.slice(-2)) }))
+})
+const matrixLoading = ref(false)
+const matrixError = ref(false)
+const selectedMatrixNote = ref(null)
+
+watch([panel, month, isAdmin, declarationTrainers], async ([destination, period, admin, owners], _, onCleanup) => {
+  if (destination !== 'matrix' || !admin) return
+  let active = true
+  onCleanup(() => { active = false })
+  matrixRows.value = []
+  selectedMatrixNote.value = null
+  matrixError.value = false
+  matrixLoading.value = Boolean(period)
+  if (!period) return
+  try {
+    const rows = await Promise.all(owners.map(async trainer => {
+      const entries = await getDocs(collection(monthRef(trainer.id, period), 'entries'))
+      const days = new Map()
+      for (const entry of entries.docs) {
+        const record = entry.data()
+        const note = record.notes?.trim()
+        const hours = hourFields.flatMap(([key, label]) => record[key] > 0
+          ? [{ key, label, note, value: Number(record[key]).toLocaleString('nl-NL') }]
+          : [])
+        if (hours.length) days.set(record.date, hours)
+      }
+      return { trainer, days }
+    }))
+    if (active) matrixRows.value = rows
+  } catch (failure) {
+    if (active) matrixError.value = true
+    console.error(failure)
+  } finally {
+    if (active) matrixLoading.value = false
+  }
+})
+
 function formatDecimal(value) {
   return value.toFixed(2).replace('.', ',')
 }
@@ -486,6 +531,7 @@ function resetPassword() {
             <template v-if="isAdmin">
               <button :aria-current="panel === 'overview' ? 'page' : undefined" :disabled="busy" @click="navigate('overview')">Maandoverzicht</button>
               <button :aria-current="panel === 'annualAdmin' ? 'page' : undefined" :disabled="busy" @click="navigate('annualAdmin')">Jaaroverzicht</button>
+              <button :aria-current="panel === 'matrix' ? 'page' : undefined" :disabled="busy" @click="navigate('matrix')">Matrix</button>
               <button :aria-current="panel === 'trainers' ? 'page' : undefined" :disabled="busy" @click="navigate('trainers')">Trainers</button>
               <button :aria-current="panel === 'rates' ? 'page' : undefined" :disabled="busy" @click="navigate('rates')">Vergoedingen</button>
             </template>
@@ -581,7 +627,7 @@ function resetPassword() {
           </section>
         </template>
       </template>
-      <template v-else-if="panel === 'overview'">
+      <template v-else-if="isAdmin && (panel === 'overview' || panel === 'matrix')">
         <section class="card period">
           <label>
             <span class="month-picker">
@@ -591,7 +637,51 @@ function resetPassword() {
             </span>
           </label>
         </section>
-        <p v-if="overviewLoading" role="status">Overzicht laden…</p>
+        <template v-if="panel === 'matrix'">
+          <p v-if="matrixLoading" role="status">Matrix laden…</p>
+          <p v-else-if="matrixError" class="banner error" role="alert">De matrix kon niet worden geladen.</p>
+          <p v-else-if="!month" class="card">Kies een maand.</p>
+          <p v-else-if="!matrixRows.length" class="card">Er zijn nog geen trainers.</p>
+          <p v-else-if="!matrixDays.length" class="card">Er zijn deze maand geen uren geregistreerd.</p>
+          <template v-else>
+            <ul class="matrix-legend" aria-label="Legenda urentypen">
+              <li v-for="[key, label] in hourFields" :key="key" class="matrix-badge" :data-type="key">{{ label }}</li>
+            </ul>
+            <h2 id="matrix-period" class="matrix-period">{{ caption }}</h2>
+            <div class="matrix-scroll" role="region" aria-label="Urenmatrix" tabindex="0">
+              <table class="matrix-table" aria-labelledby="matrix-period">
+                <thead>
+                  <tr>
+                    <th scope="col">Trainer</th>
+                    <th v-for="day in matrixDays" :key="day.date" scope="col" :aria-label="dateLabel.format(new Date(day.date))">
+                      <span class="matrix-weekday">{{ matrixWeekday.format(new Date(day.date)) }}</span>
+                      {{ day.number }}
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="{ trainer, days } in matrixRows" :key="trainer.id">
+                    <th scope="row">{{ trainer.name }}</th>
+                    <td v-for="day in matrixDays" :key="day.date">
+                      <div v-for="hours in days.get(day.date)" :key="hours.key" class="matrix-hours">
+                        <button v-if="hours.note" type="button" class="matrix-badge matrix-note-button" :data-type="hours.key"
+                          :aria-label="`${hours.label}, ${hours.value} uur. Opmerking tonen of verbergen`"
+                          :aria-expanded="selectedMatrixNote === hours"
+                          @click="selectedMatrixNote = selectedMatrixNote === hours ? null : hours"
+                          @keydown.esc.stop="selectedMatrixNote = null">{{ hours.value }}</button>
+                        <div v-else class="matrix-badge" :data-type="hours.key">
+                          <span class="matrix-sr-only">{{ hours.label }} </span>{{ hours.value }}<span class="matrix-sr-only"> uur</span>
+                        </div>
+                        <p v-if="hours.note" class="matrix-note" :class="{ 'matrix-note-open': selectedMatrixNote === hours }">{{ hours.note }}</p>
+                      </div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </template>
+        </template>
+        <p v-else-if="overviewLoading" role="status">Overzicht laden…</p>
         <p v-else-if="overviewError" class="banner error" role="alert">Het overzicht kon niet worden geladen.</p>
         <template v-else-if="month">
           <div class="summary overview-summary">

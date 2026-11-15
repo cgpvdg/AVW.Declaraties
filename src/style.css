@@ -40,6 +40,30 @@ button:disabled { opacity: .55; cursor: default; }
 .declaration-rejected, .secondary.declaration-rejected:hover:not(:disabled) { background: #fde5e5; border-color: #e2a1a1; }
 
 .month-picker { display: flex; gap: 5px; }
+.matrix-scroll { position: relative; max-width: 100%; overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: white; }
+.matrix-legend { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; margin: 0 0 8px; padding: 0; }
+.matrix-badge { border-radius: 6px; padding: 3px 8px; font-size: .8rem; font-weight: 650; text-align: center; }
+.matrix-badge[data-type="prep"] { background: #fce7ac; color: #674400; }
+.matrix-badge[data-type="training"] { background: #d7e8ff; color: #1c477c; }
+.matrix-badge[data-type="guidance"] { background: #d7f0df; color: #195738; }
+.matrix-hours + .matrix-hours { margin-top: 3px; }
+.matrix-note-button { width: 100%; min-height: 24px; text-decoration: underline dotted; text-underline-offset: 2px; }
+.matrix-note { display: none; width: min(13rem, 45vw); margin-top: 4px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: #f5f8f8; font-size: .8rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.matrix-note-open { display: block; }
+@media (hover: hover) {
+  .matrix-hours:hover > .matrix-note { display: block; }
+}
+.matrix-weekday, .matrix-table tbody th { font-size: .75rem; }
+.matrix-weekday { display: block; font-weight: 500; }
+.matrix-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.matrix-table { width: 100%; border-spacing: 0; font-variant-numeric: tabular-nums; }
+.matrix-period { padding: 10px; background: white; border: 1px solid var(--line); border-bottom: 0; border-radius: 10px 10px 0 0; font-size: inherit; font-weight: 650; letter-spacing: normal; }
+.matrix-period + .matrix-scroll { border-radius: 0 0 10px 10px; }
+.matrix-table th, .matrix-table td { padding: 8px 10px; border-top: 1px solid var(--line); border-right: 1px solid var(--line); vertical-align: top; }
+.matrix-table thead th { min-width: 44px; border-top: 0; background: #edf3f3; }
+.matrix-table tr > :first-child { position: sticky; left: 0; min-width: 8rem; max-width: 12rem; background: #edf3f3; text-align: left; overflow-wrap: anywhere; }
+.matrix-table tr > :last-child { border-right: 0; }
+.matrix-table td { white-space: nowrap; }
 .summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-bottom: 12px; }
 .summary article { text-align: center; display: grid; gap: 5px; padding: 9px; }
 .summary span { color: #526166; font-size: .74rem; }
