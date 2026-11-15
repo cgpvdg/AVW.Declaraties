@@ -17,7 +17,9 @@ Mobiele Vue-app voor maanddeclaraties van Atletiekvereniging Wieringermeer e.o.
 
    | Veld | Type | Waarde |
    | --- | --- | --- |
-   | `name` | string | Volledige naam |
+   | `firstName` | string | Voornaam |
+   | `namePrefix` | string | Tussenvoegsels, of een lege tekenreeks |
+   | `lastName` | string | Achternaam |
    | `role` | string | `trainer` of `beheerder` |
    | `level` | number | 1 t/m 4 voor trainers |
 

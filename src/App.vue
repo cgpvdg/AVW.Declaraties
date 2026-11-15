@@ -1,15 +1,17 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
-import { createUserWithEmailAndPassword, onAuthStateChanged, sendPasswordResetEmail, signInWithEmailAndPassword, signOut } from 'firebase/auth'
-import { collection, doc, getDoc, getDocs, runTransaction, setDoc, deleteDoc, updateDoc } from 'firebase/firestore/lite'
+import { createUserWithEmailAndPassword, EmailAuthProvider, onAuthStateChanged, reauthenticateWithCredential, sendPasswordResetEmail, signInWithEmailAndPassword, signOut, updatePassword } from 'firebase/auth'
+import { collection, deleteField, doc, getDoc, getDocs, runTransaction, setDoc, deleteDoc, updateDoc } from 'firebase/firestore/lite'
 import { auth, db } from './firebase'
 import { dateLabel, euro, fields, initialRates, monthLabel, monthName, summarize, today } from './model'
 import logo from './logo.png'
 import DeclarationTotals from './DeclarationTotals.vue'
 import EditIcon from './EditIcon.vue'
+import ProfileNameFields from './ProfileNameFields.vue'
+import { fullProfileName, legacyNameMigration, profileNameParts } from './profileName'
 
 const registering = ref(false)
-const registration = ref({ name: '', level: 1 })
+const registration = ref({ name: profileNameParts(), level: 1 })
 let submittingRegistration = false
 const email = ref('')
 const password = ref('')
@@ -31,6 +33,7 @@ const editing = ref(null)
 const panel = ref('declarations')
 const pageTitle = computed(() => ({
   profile: 'Profiel',
+  password: 'Wachtwoord wijzigen',
   annual: 'Jaaroverzicht',
   overview: 'Maandoverzicht',
   annualAdmin: 'Jaaroverzicht',
@@ -40,26 +43,57 @@ const pageTitle = computed(() => ({
   declarations: isAdmin.value ? 'Declaraties' : 'Mijn declaraties',
 })[panel.value])
 const menu = ref(null)
-const profileDraft = ref({ name: '', level: null })
+const profileDraft = ref({ name: profileNameParts(), level: null })
+const passwordDraft = ref(null)
 
 function navigate(destination) {
   menu.value.open = false
+  passwordDraft.value = destination === 'password' ? { current: '', next: '', confirmation: '' } : null
   panel.value = destination
   error.value = ''
   notice.value = ''
   if (destination === 'profile') {
-    profileDraft.value = { name: profile.value.name, level: profile.value.level ?? null }
+    profileDraft.value = { name: profileNameParts(profile.value), level: profile.value.level ?? null }
   }
+}
+
+function changePassword() {
+  const { current, next, confirmation } = passwordDraft.value
+  const user = auth.currentUser
+  return action(async () => {
+    if (next !== confirmation) throw { userMessage: 'De nieuwe wachtwoorden komen niet overeen.' }
+    if (!user?.email) throw { userMessage: 'Log opnieuw in om je wachtwoord te wijzigen.' }
+    try {
+      await reauthenticateWithCredential(user, EmailAuthProvider.credential(user.email, current))
+    } catch (failure) {
+      if (['auth/wrong-password', 'auth/invalid-credential', 'auth/invalid-login-credentials'].includes(failure.code)) {
+        throw { userMessage: 'Het huidige wachtwoord is onjuist.' }
+      }
+      throw failure
+    }
+    try {
+      await updatePassword(user, next)
+    } catch (failure) {
+      if (['auth/weak-password', 'auth/password-does-not-meet-requirements'].includes(failure.code)) {
+        throw { userMessage: 'Het nieuwe wachtwoord voldoet niet aan de wachtwoordvereisten.' }
+      }
+      throw failure
+    }
+    if (auth.currentUser?.uid === user.uid) {
+      navigate('profile')
+      notice.value = 'Je wachtwoord is gewijzigd.'
+    }
+  }, 'Het wachtwoord kon niet worden gewijzigd. Probeer het opnieuw.')
 }
 
 function saveProfile() {
   const { name, level } = profileDraft.value
   return action(async () => {
-    const changes = hasTrainerRole(profile.value) ? { name, level } : { name }
-    await updateDoc(doc(db, 'profiles', account.value.uid), changes)
+    const changes = hasTrainerRole(profile.value) ? { ...name, level } : name
+    await updateDoc(doc(db, 'profiles', account.value.uid), { ...changes, name: deleteField() })
     profile.value = { ...profile.value, ...changes }
     trainers.value = trainers.value.map(trainer => trainer.id === account.value.uid
-      ? { ...trainer, name, level } : trainer).sort((a, b) => a.name.localeCompare(b.name, 'nl'))
+      ? { ...trainer, ...changes } : trainer).sort((a, b) => fullProfileName(a).localeCompare(fullProfileName(b), 'nl'))
     notice.value = 'Profiel opgeslagen.'
   }, 'Je profiel kon niet worden opgeslagen.')
 }
@@ -87,8 +121,30 @@ function switchMode(value) {
 }
 
 function setTrainers(users) {
-  trainers.value = users.docs.map(item => ({ ...item.data(), id: item.id }))
-    .filter(hasTrainerRole).sort((a, b) => a.name.localeCompare(b.name, 'nl'))
+  trainers.value = users.filter(hasTrainerRole).sort((a, b) => fullProfileName(a).localeCompare(fullProfileName(b), 'nl'))
+}
+
+async function refreshTrainers() {
+  const users = await getDocs(collection(db, 'profiles'))
+  setTrainers(users.docs.map(item => ({ ...item.data(), id: item.id })))
+}
+
+async function migrateProfileName(owner, profile) {
+  if (!legacyNameMigration(profile)) return profile
+  try {
+    const target = doc(db, 'profiles', owner)
+    return await runTransaction(db, async tx => {
+      const current = (await tx.get(target)).data()
+      if (!current) return profile
+      const name = legacyNameMigration(current)
+      if (!name) return current
+      tx.update(target, { ...name, name: deleteField() })
+      return { ...current, ...name }
+    })
+  } catch (failure) {
+    console.error(failure)
+    return profile
+  }
 }
 
 function submitLogin() {
@@ -110,7 +166,7 @@ function submitLogin() {
       const target = doc(db, 'profiles', credential.user.uid)
       await runTransaction(db, async tx => {
         const existing = await tx.get(target)
-        if (!existing.exists()) tx.set(target, { name, level, role: 'trainer', status: 'pending' })
+        if (!existing.exists()) tx.set(target, { ...name, level, role: 'trainer', status: 'pending' })
         else if (existing.data().status !== 'pending') throw { userMessage: 'Dit account bestaat al. Kies Inloggen.' }
       })
       registering.value = false
@@ -124,7 +180,7 @@ function submitLogin() {
 }
 
 function rejectTrainer(trainer) {
-  if (!window.confirm('Aanvraag van ' + trainer.name + ' afkeuren?')) return
+  if (!window.confirm('Aanvraag van ' + fullProfileName(trainer) + ' afkeuren?')) return
   return action(async () => {
     const target = doc(db, 'profiles', trainer.id)
     await runTransaction(db, async tx => {
@@ -133,7 +189,7 @@ function rejectTrainer(trainer) {
       tx.set(doc(db, 'rejectedTrainers', trainer.id), { rejected: true })
       tx.delete(target)
     })
-    setTrainers(await getDocs(collection(db, 'profiles')))
+    await refreshTrainers()
     if (uid.value === trainer.id) uid.value = declarationTrainers.value[0]?.id ?? ''
     if (trainerDraft.value?.id === trainer.id) trainerDraft.value = null
     notice.value = 'Aanvraag afgekeurd en trainerprofiel verwijderd.'
@@ -147,11 +203,10 @@ function saveTrainer() {
     await runTransaction(db, async tx => {
       const found = await tx.get(target)
       if (!found.exists() || (found.data().status === 'pending') !== pending) throw { userMessage: 'Dit profiel is gewijzigd of bestaat al. Open het profiel opnieuw.' }
-      const data = { name: name.trim(), level, status }
-      tx.update(target, data)
+      tx.update(target, { ...name, name: deleteField(), level, status })
     })
-    if (id === account.value.uid) profile.value = { ...profile.value, name: name.trim(), level, status }
-    setTrainers(await getDocs(collection(db, 'profiles')))
+    if (id === account.value.uid) profile.value = { ...profile.value, ...name, level, status }
+    await refreshTrainers()
     if (!uid.value) uid.value = declarationTrainers.value[0]?.id ?? ''
     trainerDraft.value = null
     notice.value = 'Trainerprofiel opgeslagen.'
@@ -229,6 +284,7 @@ if (auth) onAuthStateChanged(auth, async (user) => {
   loading.value = true
   if (menu.value) menu.value.open = false
   account.value = user
+  passwordDraft.value = null
   profile.value = null
   uid.value = ''
   trainers.value = []
@@ -259,8 +315,11 @@ if (auth) onAuthStateChanged(auth, async (user) => {
     if (version !== authVersion) return
 
     rateDraft.value = formatRates(rateSnap.data() ?? initialRates)
-    if (users) setTrainers(users)
-    profile.value = current
+    const owners = users ? users.docs.map(item => ({ id: item.id, data: item.data() })) : [{ id: user.uid, data: current }]
+    const migrated = await Promise.all(owners.map(async ({ id, data }) => ({ ...await migrateProfileName(id, data), id })))
+    if (version !== authVersion) return
+    if (users) setTrainers(migrated)
+    profile.value = migrated.find(owner => owner.id === user.uid) ?? current
     uid.value = current.role === 'trainer' ? user.uid : declarationTrainers.value[0]?.id ?? ''
   } catch (failure) {
     if (version === authVersion) error.value = 'De profielgegevens konden niet worden geladen.'
@@ -468,7 +527,7 @@ function saveEntry() {
       if (!header.exists()) {
         const currentRates = await tx.get(rateRef())
         if (!currentRates.exists()) throw { userMessage: 'De beheerder moet eerst de vergoedingenstaffel opslaan.' }
-        tx.set(target, { name: profile.value.name, level: profile.value.level, rates: currentRates.data() })
+        tx.set(target, { name: fullProfileName(profile.value), level: profile.value.level, rates: currentRates.data() })
       }
       tx.set(dest, row)
       if (source && original !== row.date) tx.delete(source)
@@ -524,7 +583,7 @@ function resetPassword() {
         <nav class="menu-links" aria-label="Hoofdnavigatie">
           <img class="menu-logo" :src="logo" alt="AVW Atletiekvereniging Wieringermeer e.o.">
           <template v-if="profile">
-            <span class="menu-user">{{ profile.name }} · {{ isAdmin ? 'Beheerder' : 'Trainer' }}{{ hasTrainerRole(profile) && profile.level ? ' · Niveau ' + profile.level : '' }}</span>
+            <span class="menu-user">{{ fullProfileName(profile) }} · {{ isAdmin ? 'Beheerder' : 'Trainer' }}{{ hasTrainerRole(profile) && profile.level ? ' · Niveau ' + profile.level : '' }}</span>
             <button class="menu-profile" :aria-current="panel === 'profile' ? 'page' : undefined" :disabled="busy" @click="navigate('profile')">Profiel</button>
             <button :aria-current="panel === 'declarations' ? 'page' : undefined" :disabled="busy" @click="navigate('declarations')">Declaraties</button>
             <button v-if="!isAdmin" :aria-current="panel === 'annual' ? 'page' : undefined" :disabled="busy" @click="navigate('annual')">Jaaroverzicht</button>
@@ -551,7 +610,7 @@ function resetPassword() {
       <form class="card login-form" @submit.prevent="submitLogin">
         <p v-if="registering" class="muted">Een beheerder moet je aanvraag goedkeuren voordat je declaraties kunt invoeren.</p>
         <template v-if="registering">
-          <label>Naam<input v-model.trim="registration.name" autocomplete="name" required maxlength="120"></label>
+          <ProfileNameFields v-model="registration.name" :disabled="busy" />
           <label>Niveau<select v-model.number="registration.level" required><option v-for="level in 4" :key="level" :value="level">{{ level }}</option></select></label>
         </template>
         <div v-if="!auth" class="banner">De Firebase-verbinding moet nog worden ingesteld.</div>
@@ -565,16 +624,26 @@ function resetPassword() {
     <template v-else-if="profile">
       <h1 class="page-heading">{{ pageTitle }}</h1>
       <form v-if="panel === 'profile'" class="card settings" @submit.prevent="saveProfile">
-        <label>Naam<input v-model.trim="profileDraft.name" :disabled="busy" required maxlength="120"></label>
+        <ProfileNameFields v-model="profileDraft.name" :disabled="busy" />
         <label v-if="hasTrainerRole(profile)">Niveau<select v-model="profileDraft.level" :disabled="busy" required>
           <option :value="null" disabled>Kies een niveau</option>
           <option v-for="level in 4" :key="level" :value="level">{{ level }}</option>
         </select></label>
         <button class="primary" :disabled="busy">Opslaan</button>
+        <button type="button" class="link" :disabled="busy" @click="navigate('password')">Wachtwoord wijzigen</button>
+      </form>
+      <form v-else-if="panel === 'password' && passwordDraft" class="card settings" @submit.prevent="changePassword">
+        <label>Huidig wachtwoord<input v-model="passwordDraft.current" type="password" autocomplete="current-password" :disabled="busy" required></label>
+        <label>Nieuw wachtwoord<input v-model="passwordDraft.next" type="password" autocomplete="new-password" :disabled="busy" minlength="6" required></label>
+        <label>Nieuw wachtwoord herhalen<input v-model="passwordDraft.confirmation" type="password" autocomplete="new-password" :disabled="busy" minlength="6" required></label>
+        <div class="form-actions">
+          <button class="primary" :disabled="busy">Wachtwoord opslaan</button>
+          <button type="button" class="secondary" :disabled="busy" @click="navigate('profile')">Terug naar profiel</button>
+        </div>
       </form>
       <section v-else-if="panel === 'trainers'" class="card settings">
         <form v-if="trainerDraft" class="settings" @submit.prevent="saveTrainer">
-          <label>Naam<input v-model.trim="trainerDraft.name" maxlength="120" required></label>
+          <ProfileNameFields v-model="trainerDraft.name" :disabled="busy" />
           <label>Niveau<select v-model.number="trainerDraft.level" required>
             <option v-for="level in 4" :key="level" :value="level">{{ level }}</option>
           </select></label>
@@ -588,8 +657,8 @@ function resetPassword() {
         </form>
         <ul class="entry-list trainer-list">
           <li v-for="trainer in trainers" :key="trainer.id">
-            <div><strong>{{ trainer.name }}</strong><p class="muted">{{ statusLabel(trainer) }} · Niveau {{ trainer.level ?? 'instellen' }}</p></div>
-            <button class="secondary" :disabled="busy" :aria-label="trainer.status === 'pending' ? undefined : 'Trainer bewerken'" @click="trainerDraft = { ...trainer, level: trainer.level ?? 1, pending: trainer.status === 'pending', status: trainer.status === 'pending' ? 'active' : (trainer.status ?? 'active') }">
+            <div><strong>{{ fullProfileName(trainer) }}</strong><p class="muted">{{ statusLabel(trainer) }} · Niveau {{ trainer.level ?? 'instellen' }}</p></div>
+            <button class="secondary" :disabled="busy" :aria-label="trainer.status === 'pending' ? undefined : 'Trainer bewerken'" @click="trainerDraft = { ...trainer, name: profileNameParts(trainer), level: trainer.level ?? 1, pending: trainer.status === 'pending', status: trainer.status === 'pending' ? 'active' : (trainer.status ?? 'active') }">
               <template v-if="trainer.status === 'pending'">Verifiëren</template>
               <EditIcon v-else />
             </button>
@@ -661,7 +730,7 @@ function resetPassword() {
                 </thead>
                 <tbody>
                   <tr v-for="{ trainer, days } in matrixRows" :key="trainer.id">
-                    <th scope="row">{{ trainer.name }}</th>
+                    <th scope="row">{{ profileNameParts(trainer).firstName }}</th>
                     <td v-for="day in matrixDays" :key="day.date">
                       <div v-for="hours in days.get(day.date)" :key="hours.key" class="matrix-hours">
                         <button v-if="hours.note" type="button" class="matrix-badge matrix-note-button" :data-type="hours.key"
@@ -693,7 +762,7 @@ function resetPassword() {
             <ul v-else class="entry-list">
               <li v-for="{ trainer, total, status } in overviewRows" :key="trainer.id" class="annual-month">
                 <button type="button" class="secondary annual-month-link" :class="'declaration-' + status" @click="uid = trainer.id; navigate('declarations')">
-                  <strong>{{ trainer.name }}</strong>
+                  <strong>{{ fullProfileName(trainer) }}</strong>
                   <strong>{{ euro.format(total) }}</strong>
                 </button>
               </li>
@@ -717,7 +786,7 @@ function resetPassword() {
           <label v-if="isAdmin">
             <select v-model="uid" aria-label="Trainer" :disabled="busy">
               <option v-if="!declarationTrainers.length" value="">Geen trainers gevonden</option>
-              <option v-for="trainer in declarationTrainers" :key="trainer.id" :value="trainer.id">{{ trainer.name }}{{ trainer.status && trainer.status !== 'active' ? ' · ' + statusLabel(trainer) : '' }}</option>
+              <option v-for="trainer in declarationTrainers" :key="trainer.id" :value="trainer.id">{{ fullProfileName(trainer) }}{{ trainer.status && trainer.status !== 'active' ? ' · ' + statusLabel(trainer) : '' }}</option>
             </select>
           </label>
           <label>
