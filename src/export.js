@@ -29,12 +29,12 @@ export async function makeDeclaration(templateBytes, month, header, entries) {
         cell.setAttribute('s', cells.get('E' + number)?.getAttribute('s') ?? '24')
         row.insertBefore(cell, next ?? null)
       }
-      cell.replaceChildren()
+      while (cell.firstChild) cell.removeChild(cell.firstChild)
       cell.removeAttribute('t')
       const append = (parent, tag, text) => {
         const node = xml.createElementNS(ns, tag)
         node.textContent = text
-        parent.append(node)
+        parent.appendChild(node)
         return node
       }
       if (formula) append(cell, 'f', formula)
@@ -95,6 +95,13 @@ export async function downloadDeclaration(month, header, entries) {
   const link = document.createElement('a')
   link.href = url
   link.download = 'AVW Declaratie ' + month + ' - ' + header.name.replace(/[\\/:*?"<>|]/g, '_') + '.xlsx'
-  link.click()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
+  link.style.display = 'none'
+  document.body.appendChild(link)
+  try {
+    link.click()
+  } finally {
+    link.remove()
+    // Safari may still be reading the file while its download dialog is open.
+    setTimeout(() => URL.revokeObjectURL(url), 60000)
+  }
 }

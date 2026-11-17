@@ -859,8 +859,13 @@ function saveRates() {
 }
 function exportSheet() {
   return action(async () => {
-    const { downloadDeclaration } = await import('./export')
-    await downloadDeclaration(month.value, sheet.value, records.value)
+    try {
+      const { downloadDeclaration } = await import('./export')
+      await downloadDeclaration(month.value, sheet.value, records.value)
+    } catch (failure) {
+      console.error(failure)
+      throw { userMessage: 'De Excel-export is mislukt.' + (failure.message ? ' ' + failure.message : '') }
+    }
   }, 'De Excel-export is mislukt.')
 }
 function resetPassword() {
