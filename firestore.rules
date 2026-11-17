@@ -2,8 +2,8 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     function role(value) {
-      return request.auth != null &&
-        get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role == value;
+      let profile = get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data;
+      return request.auth != null && profile.role == value && profile.get('status', 'active') == 'active';
     }
     function trainer(uid) {
       return request.auth != null && request.auth.uid == uid &&
@@ -52,10 +52,18 @@ service cloud.firestore {
         request.resource.data.role == 'trainer' && request.resource.data.status == 'pending' &&
         request.resource.data.keys().hasOnly(['name','firstName','namePrefix','lastName','level','role','status']) && validTrainer(request.resource.data) &&
         !exists(/databases/$(database)/documents/rejectedTrainers/$(uid));
+      allow create: if role('beheerder') && request.auth.uid != uid &&
+        request.resource.data.keys().hasOnly(['firstName','namePrefix','lastName','email','role','status']) &&
+        validProfileName(request.resource.data) && request.resource.data.role == 'beheerder' &&
+        request.resource.data.status == 'active' &&
+        request.resource.data.email is string && request.resource.data.email.size() <= 254 &&
+        request.resource.data.email.matches('[^ @]+@[^ @]+');
       allow delete: if role('beheerder') && resource.data.role == 'trainer' &&
         resource.data.status == 'pending' && existsAfter(/databases/$(database)/documents/rejectedTrainers/$(uid));
+      allow delete: if role('beheerder') && request.auth.uid != uid &&
+        resource.data.role == 'beheerder' && !resource.data.get('trainer', false);
       allow update: if request.auth != null && request.auth.uid == uid &&
-        (resource.data.role == 'beheerder' || activeTrainer(resource.data)) &&
+        ((resource.data.role == 'beheerder' && resource.data.get('status', 'active') == 'active') || activeTrainer(resource.data)) &&
         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name','firstName','namePrefix','lastName','level']) &&
         validNameUpdate() &&
         ((resource.data.role == 'beheerder' && !resource.data.get('trainer', false) &&
@@ -65,7 +73,16 @@ service cloud.firestore {
       allow update: if role('beheerder') &&
         (resource.data.role == 'trainer' || resource.data.get('trainer', false)) &&
         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name','firstName','namePrefix','lastName','level','status']) &&
+        (resource.data.role == 'trainer' ||
+          request.resource.data.status == resource.data.get('status', 'active')) &&
         validNameUpdate() && validTrainer(request.resource.data) && request.resource.data.status != 'pending';
+      allow update: if role('beheerder') && request.auth.uid != uid && resource.data.role == 'beheerder' &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name','firstName','namePrefix','lastName','status']) &&
+        validNameUpdate() && request.resource.data.status in ['active','inactive'];
+      allow update: if role('beheerder') && request.auth.uid != uid && resource.data.role == 'beheerder' &&
+        resource.data.get('trainer', false) && request.resource.data.role == 'trainer' &&
+        !request.resource.data.keys().hasAny(['trainer']) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['role','trainer']);
       allow update: if request.auth != null && (request.auth.uid == uid || role('beheerder')) &&
         resource.data.keys().hasAny(['name']) && !resource.data.keys().hasAny(['firstName']) &&
         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name','firstName','namePrefix','lastName']) &&

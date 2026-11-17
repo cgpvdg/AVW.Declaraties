@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { createUserWithEmailAndPassword, EmailAuthProvider, onAuthStateChanged, reauthenticateWithCredential, sendPasswordResetEmail, signInWithEmailAndPassword, signOut, updatePassword } from 'firebase/auth'
 import { collection, deleteField, doc, getDoc, getDocs, runTransaction, setDoc, deleteDoc, updateDoc } from 'firebase/firestore/lite'
-import { auth, db } from './firebase'
+import { auth, createManagedAccount, db } from './firebase'
 import { dateLabel, euro, fields, initialRates, monthLabel, monthName, summarize, today } from './model'
 import logo from './logo.png'
 import DeclarationFields from './DeclarationFields.vue'
@@ -44,6 +44,7 @@ const pageTitle = computed(() => ({
   annualAdmin: 'Jaaroverzicht',
   matrix: 'Matrix',
   trainers: 'Trainers',
+  administrators: 'Beheerders',
   rates: 'Vergoedingen',
   recurring: 'Terugkerende declaraties',
   notifications: 'Te accorderen declaraties',
@@ -59,6 +60,7 @@ function navigate(destination) {
   panel.value = destination
   error.value = ''
   notice.value = ''
+  administratorDraft.value = null
   if (destination === 'profile') {
     profileDraft.value = { name: profileNameParts(profile.value), level: profile.value.level ?? null }
   }
@@ -127,13 +129,76 @@ function switchMode(value) {
   loadMonth()
 }
 
-function setTrainers(users) {
+function setProfileLists(users) {
   trainers.value = users.filter(hasTrainerRole).sort((a, b) => fullProfileName(a).localeCompare(fullProfileName(b), 'nl'))
+  administrators.value = users.filter(user => user.role === 'beheerder' &&
+    (user.hidden !== true || user.id === account.value?.uid))
+    .sort((a, b) => fullProfileName(a).localeCompare(fullProfileName(b), 'nl'))
 }
 
-async function refreshTrainers() {
+const administrators = ref([])
+const administratorDraft = ref(null)
+
+function createAdministrator() {
+  const { name, email, password } = administratorDraft.value
+  return action(async () => {
+    try {
+      await createManagedAccount(email, password, id =>
+        setDoc(doc(db, 'profiles', id), { ...name, email, role: 'beheerder', status: 'active' }))
+    } catch (failure) {
+      if (failure.code === 'auth/email-already-in-use') {
+        throw { userMessage: 'Dit e-mailadres is al in gebruik.' }
+      }
+      throw failure
+    }
+    administratorDraft.value = null
+    await refreshProfileLists()
+    notice.value = 'Beheerder aangemaakt.'
+  }, 'De beheerder kon niet worden aangemaakt.')
+}
+
+function saveAdministrator() {
+  const { id, name, status } = administratorDraft.value
+  const ownAccount = id === account.value.uid
+  return action(async () => {
+    const changes = { ...name, name: deleteField() }
+    if (!ownAccount) changes.status = status
+    const target = doc(db, 'profiles', id)
+    await runTransaction(db, async tx => {
+      const current = (await tx.get(target)).data()
+      if (current?.role !== 'beheerder') throw { userMessage: 'Dit account is geen beheerder meer.' }
+      tx.update(target, changes)
+    })
+    if (ownAccount) profile.value = { ...profile.value, ...name }
+    administratorDraft.value = null
+    await refreshProfileLists()
+    notice.value = 'Beheerder opgeslagen.'
+  }, 'De beheerder kon niet worden opgeslagen.')
+}
+
+function removeAdministrator() {
+  const { id, name } = administratorDraft.value
+  if (id === account.value.uid || !window.confirm('Beheerder ' + fullProfileName(name) + ' verwijderen?')) return
+  return action(async () => {
+    const target = doc(db, 'profiles', id)
+    await runTransaction(db, async tx => {
+      const current = (await tx.get(target)).data()
+      if (current?.role !== 'beheerder') throw { userMessage: 'Dit account is geen beheerder meer.' }
+      if (current.trainer === true) {
+        tx.update(target, { role: 'trainer', trainer: deleteField() })
+      } else {
+        tx.delete(target)
+      }
+    })
+    administratorDraft.value = null
+    await refreshProfileLists()
+    notice.value = 'Beheerder verwijderd.'
+  }, 'De beheerder kon niet worden verwijderd.')
+}
+
+async function refreshProfileLists() {
   const users = await getDocs(collection(db, 'profiles'))
-  setTrainers(users.docs.map(item => ({ ...item.data(), id: item.id })))
+  setProfileLists(users.docs.map(item => ({ ...item.data(), id: item.id })))
 }
 
 async function migrateProfileName(owner, profile) {
@@ -196,7 +261,7 @@ function rejectTrainer(trainer) {
       tx.set(doc(db, 'rejectedTrainers', trainer.id), { rejected: true })
       tx.delete(target)
     })
-    await refreshTrainers()
+    await refreshProfileLists()
     if (uid.value === trainer.id) uid.value = declarationTrainers.value[0]?.id ?? ''
     if (trainerDraft.value?.id === trainer.id) trainerDraft.value = null
     notice.value = 'Aanvraag afgekeurd en trainerprofiel verwijderd.'
@@ -213,7 +278,7 @@ function saveTrainer() {
       tx.update(target, { ...name, name: deleteField(), level, status })
     })
     if (id === account.value.uid) profile.value = { ...profile.value, ...name, level, status }
-    await refreshTrainers()
+    await refreshProfileLists()
     if (!uid.value) uid.value = declarationTrainers.value[0]?.id ?? ''
     trainerDraft.value = null
     notice.value = 'Trainerprofiel opgeslagen.'
@@ -295,6 +360,8 @@ if (auth) onAuthStateChanged(auth, async (user) => {
   profile.value = null
   uid.value = ''
   trainers.value = []
+  administrators.value = []
+  administratorDraft.value = null
   editing.value = null
   panel.value = 'declarations'
   trainerDraft.value = null
@@ -303,6 +370,13 @@ if (auth) onAuthStateChanged(auth, async (user) => {
     const current = (await getDoc(doc(db, 'profiles', user.uid))).data()
     if (!current || !['trainer', 'beheerder'].includes(current.role)) {
       if (version === authVersion) error.value = 'Voor dit account is nog geen AVW-profiel ingesteld.'
+      return
+    }
+    if (current.role === 'beheerder' && (current.status ?? 'active') !== 'active') {
+      if (version === authVersion) {
+        await signOut(auth)
+        error.value = 'Je beheerdersaccount is inactief.'
+      }
       return
     }
     if (current.role !== 'beheerder' && !canTrain(current)) {
@@ -325,7 +399,7 @@ if (auth) onAuthStateChanged(auth, async (user) => {
     const owners = users ? users.docs.map(item => ({ id: item.id, data: item.data() })) : [{ id: user.uid, data: current }]
     const migrated = await Promise.all(owners.map(async ({ id, data }) => ({ ...await migrateProfileName(id, data), id })))
     if (version !== authVersion) return
-    if (users) setTrainers(migrated)
+    if (users) setProfileLists(migrated)
     profile.value = migrated.find(owner => owner.id === user.uid) ?? current
     uid.value = current.role === 'trainer' ? user.uid : declarationTrainers.value[0]?.id ?? ''
   } catch (failure) {
@@ -685,6 +759,7 @@ function resetPassword() {
               <button :aria-current="panel === 'annualAdmin' ? 'page' : undefined" :disabled="busy" @click="navigate('annualAdmin')"><NavigationIcon name="annual" />Jaaroverzicht</button>
               <button :aria-current="panel === 'matrix' ? 'page' : undefined" :disabled="busy" @click="navigate('matrix')"><NavigationIcon name="matrix" />Matrix</button>
               <button :aria-current="panel === 'trainers' ? 'page' : undefined" :disabled="busy" @click="navigate('trainers')"><NavigationIcon name="trainers" />Trainers</button>
+              <button :aria-current="panel === 'administrators' ? 'page' : undefined" :disabled="busy" @click="navigate('administrators')"><NavigationIcon name="administrators" />Beheerders</button>
               <button :aria-current="panel === 'rates' ? 'page' : undefined" :disabled="busy" @click="navigate('rates')"><NavigationIcon name="rates" />Vergoedingen</button>
             </template>
             <button v-if="profile.role === 'beheerder' && canTrain(profile)" :disabled="busy" @click="switchMode(isAdmin ? 'trainer' : 'beheerder')"><NavigationIcon name="switch" />Verder als {{ isAdmin ? 'trainer' : 'beheerder' }}</button>
@@ -777,7 +852,7 @@ function resetPassword() {
           <label>Niveau<select v-model.number="trainerDraft.level" required>
             <option v-for="level in 4" :key="level" :value="level">{{ level }}</option>
           </select></label>
-          <label v-if="!trainerDraft.pending">Status<select v-model="trainerDraft.status">
+          <label v-if="!trainerDraft.pending && trainerDraft.role === 'trainer'">Status<select v-model="trainerDraft.status">
             <option value="active">Actief</option><option value="inactive">Inactief</option><option value="deleted">Verwijderd</option>
           </select></label>
           <div class="form-actions">
@@ -796,6 +871,45 @@ function resetPassword() {
           </li>
         </ul>
       </section>
+      <template v-else-if="panel === 'administrators' && isAdmin">
+        <button v-if="!administratorDraft" type="button" class="primary add-declaration" :disabled="busy"
+          @click="administratorDraft = { name: profileNameParts(), email: '', password: '' }">Beheerder toevoegen</button>
+        <section class="card settings">
+          <form v-if="administratorDraft" class="settings" @submit.prevent="administratorDraft.id ? saveAdministrator() : createAdministrator()">
+            <h2>{{ administratorDraft.id ? 'Beheerder wijzigen' : 'Nieuwe beheerder' }}</h2>
+            <ProfileNameFields v-model="administratorDraft.name" :disabled="busy" />
+            <template v-if="!administratorDraft.id">
+              <label>E-mailadres<input v-model.trim="administratorDraft.email" type="email" maxlength="254" autocomplete="off" :disabled="busy" required></label>
+              <label>Wachtwoord<input v-model="administratorDraft.password" type="password" minlength="6" autocomplete="new-password" :disabled="busy" required></label>
+            </template>
+            <label v-if="administratorDraft.id && administratorDraft.id !== account.uid">Status
+              <select v-model="administratorDraft.status" :disabled="busy">
+                <option value="active">Actief</option>
+                <option value="inactive">Inactief</option>
+              </select>
+            </label>
+            <div class="form-actions">
+              <button class="primary" :disabled="busy">{{ administratorDraft.id ? 'Opslaan' : 'Aanmaken' }}</button>
+              <button type="button" class="secondary" :disabled="busy" @click="administratorDraft = null">Annuleren</button>
+              <button v-if="administratorDraft.id && administratorDraft.id !== account.uid" type="button" class="link danger" :disabled="busy" @click="removeAdministrator">Verwijderen</button>
+            </div>
+          </form>
+          <ul v-else class="entry-list trainer-list">
+            <li v-for="administrator in administrators" :key="administrator.id">
+              <div>
+                <strong>{{ fullProfileName(administrator) }}</strong>
+                <p v-if="administrator.id === account.uid" class="muted">{{ account.email || administrator.email }} • Eigen account</p>
+                <p v-else-if="administrator.email" class="muted">{{ administrator.email }}</p>
+                <p v-if="(administrator.status ?? 'active') !== 'active'" class="muted">Inactief</p>
+              </div>
+              <button type="button" class="secondary" :disabled="busy" :aria-label="'Beheerder wijzigen: ' + fullProfileName(administrator)"
+                @click="administratorDraft = { id: administrator.id, name: profileNameParts(administrator), status: administrator.status ?? 'active' }">
+                <EditIcon />
+              </button>
+            </li>
+          </ul>
+        </section>
+      </template>
       <template v-else-if="panel === 'annual' || panel === 'annualAdmin'">
         <p v-if="annualLoading" role="status">Jaaroverzicht laden…</p>
         <p v-else-if="annualError" class="banner error" role="alert">Het jaaroverzicht kon niet worden geladen.</p>

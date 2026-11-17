@@ -2,6 +2,7 @@
 defineProps({ name: { type: String, required: true } })
 
 const paths = {
+  administrators: 'M12 3l7 3v5c0 5-3 8-7 10-4-2-7-5-7-10V6zM9 12l2 2 4-4',
   notifications: 'M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4',
   declarations: 'M6 3h8l4 4v14H6zM14 3v5h4M9 12h6m-6 4h6',
   overview: 'M4 6h16v14H4zM4 10h16M8 4v4m8-4v4M8 14h3m2 3h3',
