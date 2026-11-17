@@ -94,7 +94,8 @@ dialog::backdrop { background: #15292d80; }
 .notification-menu[open] summary { position: relative; z-index: 4; background: white; }
 .notification-backdrop { position: fixed; inset: 0; z-index: 3; }
 .notification-items { position: absolute; top: calc(100% + 8px); right: 0; z-index: 4; width: min(300px, calc(100vw - 90px)); display: grid; gap: 4px; padding: 8px; background: white; border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 4px 16px #15292d22; }
-.notification-items button { text-align: left; }
+.notification-items { max-height: min(420px, calc(100dvh - 80px)); overflow-y: auto; overscroll-behavior: contain; }
+.notification-items button { text-align: left; flex-shrink: 0; }
 .occurrence-list { display: grid; gap: 12px; }
 .occurrence-row { display: grid; gap: 8px; }
 .occurrence-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }

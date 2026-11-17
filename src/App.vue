@@ -65,7 +65,7 @@ const notifications = computed(() => [
 function openNotification(notification) {
   if (notification.period) {
     month.value = notification.period
-    uid.value = notification.owner
+    if (notification.owner) uid.value = notification.owner
   }
   navigate(notification.destination)
 }
@@ -94,7 +94,18 @@ async function refreshMonthNotifications() {
       }))
       return items.filter(Boolean)
     }))
-    if (version === notificationVersion) monthNotifications.value = results.flat().sort((a, b) => a.period.localeCompare(b.period))
+    if (version !== notificationVersion) return
+    let items = results.flat()
+    if (admin) {
+      const counts = new Map()
+      for (const item of items) counts.set(item.period, (counts.get(item.period) ?? 0) + 1)
+      items = [...counts].map(([period, count]) => ({
+        id: period, period, destination: 'overview',
+        label: count + (count === 1 ? ' declaratie van ' : ' declaraties van ') +
+          monthLabel.format(new Date(period + '-01T00:00:00Z')) + ' beoordelen',
+      }))
+    }
+    monthNotifications.value = items.sort((a, b) => a.period.localeCompare(b.period))
   } catch (failure) {
     console.error('Maandmeldingen laden mislukt.', failure)
   }
