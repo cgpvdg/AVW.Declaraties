@@ -9,6 +9,17 @@ service cloud.firestore {
       return request.auth != null && request.auth.uid == uid &&
         activeTrainer(get(/databases/$(database)/documents/profiles/$(uid)).data);
     }
+    function godmode() {
+      return role('beheerder') &&
+        get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.get('godmode', false) == true;
+    }
+    function delegatedTrainer(uid) {
+      return request.auth != null && request.auth.uid != uid && godmode() &&
+        activeTrainer(get(/databases/$(database)/documents/profiles/$(uid)).data);
+    }
+    function canActAsTrainer(uid) {
+      return trainer(uid) || delegatedTrainer(uid);
+    }
     function activeTrainer(data) {
       return (data.role == 'trainer' || (data.role == 'beheerder' && data.get('trainer', false))) &&
         data.get('status', 'active') == 'active' && data.level in [1,2,3,4];
@@ -74,6 +85,9 @@ service cloud.firestore {
         (resource.data.role == 'trainer' ||
           request.resource.data.status == resource.data.get('status', 'active')) &&
         validNameUpdate() && validTrainer(request.resource.data) && request.resource.data.status != 'pending';
+      allow update: if delegatedTrainer(uid) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name','firstName','namePrefix','lastName','level']) &&
+        validNameUpdate() && request.resource.data.level in [1,2,3,4];
       allow update: if role('beheerder') && request.auth.uid != uid && resource.data.role == 'beheerder' &&
         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name','firstName','namePrefix','lastName','status']) &&
         validNameUpdate() && request.resource.data.status in ['active','inactive'];
@@ -97,12 +111,38 @@ service cloud.firestore {
       allow create, update: if role('beheerder') && validRate(request.resource.data);
     }
     match /profiles/{uid}/recurringDeclarations/{id} {
-      allow read: if trainer(uid);
-      allow create, update: if trainer(uid) && validRecurringDeclaration(request.resource.data);
+      allow read: if canActAsTrainer(uid);
+      allow create, update: if canActAsTrainer(uid) && validRecurringDeclaration(request.resource.data);
     }
     match /profiles/{uid}/recurringDecisions/{id} {
-      allow read: if trainer(uid);
-      allow create: if trainer(uid) && validRecurringDecision(uid, id, request.resource.data);
+      allow read: if canActAsTrainer(uid);
+      allow create: if canActAsTrainer(uid) && validRecurringDecision(uid, id, request.resource.data);
+    }
+    match /profiles/{uid}/signatures/{kind} {
+      allow get: if canUseSavedSignature(uid, kind);
+      allow create, update: if canUseSavedSignature(uid, kind) &&
+        request.resource.data.keys().hasOnly(['image']) &&
+        validSignatureImage(request.resource.data.image);
+    }
+    function canUseSavedSignature(uid, kind) {
+      return request.auth != null && request.auth.uid == uid &&
+        ((kind == 'submission' && trainer(uid)) || (kind == 'approval' && role('beheerder')) ||
+          (kind == 'delegatedSubmission' && godmode()));
+    }
+    function validSignatureImage(image) {
+      return image is string && image.size() <= 200000 &&
+        image.matches('data:image/png;base64,iVBORw0KGgo[A-Za-z0-9+/]+=*');
+    }
+    function validDeclarationSignature(signature, kind, representedUid) {
+      return signature is map &&
+        (kind == 'delegatedSubmission'
+          ? signature.keys().hasOnly(['image','signerUid','signerName','signedAt','representedUid']) &&
+            signature.representedUid == representedUid
+          : signature.keys().hasOnly(['image','signerUid','signerName','signedAt'])) &&
+        signature.signerUid == request.auth.uid && signature.signedAt == request.time &&
+        signature.signerName == fullProfileName(get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data) &&
+        validSignatureImage(signature.image) &&
+        signature.image == getAfter(/databases/$(database)/documents/profiles/$(request.auth.uid)/signatures/$(kind)).data.image;
     }
     function validRecurringDecision(uid, id, data) {
       let entry = /databases/$(database)/documents/profiles/$(uid)/months/$(data.period)/entries/$(data.day);
@@ -131,7 +171,7 @@ service cloud.firestore {
     }
     match /profiles/{uid}/months/{month} {
       allow read: if role('beheerder') || trainer(uid);
-      allow create: if trainer(uid) && month.matches('[0-9]{4}-(0[1-9]|1[0-2])') &&
+      allow create: if canActAsTrainer(uid) && month.matches('[0-9]{4}-(0[1-9]|1[0-2])') &&
         request.resource.data.keys().hasOnly(['rates','name','level']) &&
         request.resource.data.name == fullProfileName(get(/databases/$(database)/documents/profiles/$(uid)).data) &&
         request.resource.data.level == get(/databases/$(database)/documents/profiles/$(uid)).data.level &&
@@ -140,8 +180,8 @@ service cloud.firestore {
       allow update: if validDeclarationTransition(uid);
       match /entries/{day} {
         allow read: if role('beheerder') || trainer(uid);
-        allow delete: if trainer(uid) && editableDeclaration(uid, month);
-        allow create, update: if trainer(uid) && editableDeclaration(uid, month) &&
+        allow delete: if canActAsTrainer(uid) && editableDeclaration(uid, month);
+        allow create, update: if canActAsTrainer(uid) && editableDeclaration(uid, month) &&
           day.matches('0[1-9]|[12][0-9]|3[01]') && validEntry(request.resource.data, month, day);
       }
     }
@@ -153,16 +193,29 @@ service cloud.firestore {
       let previous = resource.data.get('status', 'concept');
       let next = request.resource.data.status;
       let note = request.resource.data.rejectionNote;
-      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'rejectionNote']) &&
-        (next == 'rejected'
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      let data = request.resource.data;
+      return (next == 'rejected'
           ? note is string && note.size() <= 1000 && note.matches('(?s).*\\S.*')
           : note == '') &&
-        ((trainer(uid) &&
-          ((previous in ['concept', 'rejected'] && next == 'submitted') ||
-            (previous == 'submitted' && next == 'concept'))) ||
+        ((canActAsTrainer(uid) &&
+          ((previous in ['concept', 'rejected'] && next == 'submitted' &&
+              changed.hasOnly(['status','rejectionNote','submissionSignature']) &&
+              validDeclarationSignature(data.submissionSignature,
+                request.auth.uid == uid ? 'submission' : 'delegatedSubmission', uid)) ||
+            (previous == 'submitted' && next == 'concept' &&
+              changed.hasOnly(['status','rejectionNote','submissionSignature']) &&
+              !data.keys().hasAny(['submissionSignature'])))) ||
           (role('beheerder') &&
-            ((previous == 'submitted' && next in ['approved', 'rejected']) ||
-              (previous in ['approved', 'rejected'] && next == 'submitted'))));
+            ((previous == 'submitted' && next == 'approved' &&
+                changed.hasOnly(['status','rejectionNote','approvalSignature']) &&
+                validDeclarationSignature(data.approvalSignature, 'approval', uid)) ||
+              (((previous == 'submitted' && next == 'rejected') ||
+                  (previous == 'rejected' && next == 'submitted')) &&
+                changed.hasOnly(['status','rejectionNote'])) ||
+              (previous == 'approved' && next == 'submitted' &&
+                changed.hasOnly(['status','rejectionNote','approvalSignature']) &&
+                !data.keys().hasAny(['approvalSignature'])))));
     }
     function validEntry(data, month, day) {
       return data.keys().hasOnly(['date','prep','training','guidance','kilometers','expenses','notes','createdAt']) &&

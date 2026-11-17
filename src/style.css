@@ -88,8 +88,10 @@ dialog form, .settings { display: grid; gap: 14px; }
 
 dialog::backdrop { background: #15292d80; }
 .header-actions { display: flex; gap: 8px; align-items: center; }
+.pdf-action { display: inline-flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 44px; padding: 8px 15px; border: 1px solid var(--accent); border-radius: 7px; background: #e8eff9; color: #245493; font-size: .9rem; font-weight: 650; text-decoration: none; }
+.pdf-action:hover:not(:disabled) { background: #d6e4f7; }
+.declaration-status + .pdf-action { margin-bottom: 12px; }
 .notification-bell { display: grid; place-items: center; width: 44px; padding: 0; color: var(--accent); }
-.export-download { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 8px 15px; border: 1px solid var(--line); border-radius: 7px; font-weight: 650; text-decoration: none; }
 .notification-bell svg { transform-origin: 50% 15%; animation: notification-ring 10s ease-in-out infinite; }
 .notification-menu .notification-bell { animation: notification-highlight 10s ease-in-out infinite; }
 @keyframes notification-highlight {
@@ -169,7 +171,6 @@ dialog::backdrop { background: #15292d80; }
 .entry-list .annual-month { padding-block: 6px; border-top: 0; }
 .annual-month-link { width: 100%; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; text-align: start; }
 
-.export-icon { width: 18px; height: 18px; vertical-align: -4px; margin-inline-end: 4px; }
 
 .overview-summary { grid-template-columns: minmax(0, 1fr); }
 

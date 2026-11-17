@@ -31,7 +31,9 @@ Rollen en niveaus worden beheerd in de Firebase-console. Firestore-regels beperk
 
 Per dag is één regel beschikbaar. Bij een nieuwe regel staat de datum op vandaag in de huidige maand, of op de eerste dag van een andere geselecteerde maand. Tijden worden in decimale uren ingevoerd. De niveauvergoeding geldt voor voorbereiding en training, begeleiding en kilometers hebben elk een eigen tarief en onkosten worden tegen het ingevoerde bedrag meegenomen.
 
-De Excel-export gebruikt een opgeschoonde kopie van het aangeleverde formulier met de oorspronkelijke opmaak, afdrukinstellingen en handtekeningvakken. De selectieknoppen uit het sjabloon zijn overbodig doordat de app trainer en maand al invult. De onkostensom neemt ook de laatste drie dagrijen mee.
+De PDF-export maakt een staand A4-formulier voor de geselecteerde trainer en maand, met de beschikbare handtekeningen.
+
+Met het booleaanse veld `godmode: true` in `profiles/{uid}` kan een actieve beheerder bij **Trainers** namens een actieve trainer werken. Gedelegeerde indieningen worden ondertekend met de eigen handtekening van de beheerder. De naam van de beheerder wordt bij de handtekening opgeslagen.
 
 ## GitHub Pages
 

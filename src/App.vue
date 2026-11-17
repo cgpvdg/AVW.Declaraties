@@ -8,6 +8,7 @@ import logo from './logo.png'
 import DeclarationFields from './DeclarationFields.vue'
 import { finishDecimal, formatDecimal, maskDecimal, parseDecimal } from './decimal'
 import DeclarationTotals from './DeclarationTotals.vue'
+import SignatureDialog from './SignatureDialog.vue'
 import EditIcon from './EditIcon.vue'
 import NavigationIcon from './NavigationIcon.vue'
 import ProfileNameFields from './ProfileNameFields.vue'
@@ -30,6 +31,7 @@ const month = ref(today().slice(0, 7))
 const records = ref([])
 const sheet = ref(null)
 const rejectionDraft = ref(null)
+const signatureDraft = ref(null)
 const declarationStatuses = { concept: 'Concept', submitted: 'Ingediend', approved: 'Goedgekeurd', rejected: 'Afgewezen' }
 const declarationStatus = computed(() => sheet.value?.status ?? 'concept')
 const canEditEntries = computed(() => !isAdmin.value && ['concept', 'rejected'].includes(declarationStatus.value))
@@ -65,6 +67,7 @@ const notifications = computed(() => [
   ...monthNotifications.value,
 ])
 function openNotification(notification) {
+  if (!isAdmin.value && notification.owner && notification.owner !== trainerOwner.value) return
   if (notification.period) {
     month.value = notification.period
     if (notification.owner) uid.value = notification.owner
@@ -80,7 +83,7 @@ async function refreshMonthNotifications() {
     return
   }
   const admin = isAdmin.value
-  const owners = admin ? declarationTrainers.value : [{ ...profile.value, id: account.value.uid }]
+  const owners = admin ? declarationTrainers.value : [{ ...trainerProfile.value, id: trainerOwner.value }]
   try {
     const results = await Promise.all(owners.map(async owner => {
       const months = await getDocs(collection(db, 'profiles', owner.id, 'months'))
@@ -134,11 +137,12 @@ function navigate(destination) {
   notice.value = ''
   administratorDraft.value = null
   if (destination === 'profile') {
-    profileDraft.value = { name: profileNameParts(profile.value), level: profile.value.level ?? null }
+    profileDraft.value = { name: profileNameParts(trainerProfile.value), level: trainerProfile.value.level ?? null }
   }
 }
 
 function changePassword() {
+  if (impersonatedTrainer.value) return
   const { current, next, confirmation } = passwordDraft.value
   const user = auth.currentUser
   return action(async () => {
@@ -169,11 +173,16 @@ function changePassword() {
 
 function saveProfile() {
   const { name, level } = profileDraft.value
+  const owner = trainerOwner.value
+  const current = trainerProfile.value
+  const delegated = Boolean(impersonatedTrainer.value)
   return action(async () => {
-    const changes = hasTrainerRole(profile.value) ? { ...name, level } : name
-    await updateDoc(doc(db, 'profiles', account.value.uid), { ...changes, name: deleteField() })
-    profile.value = { ...profile.value, ...changes }
-    trainers.value = trainers.value.map(trainer => trainer.id === account.value.uid
+    const changes = hasTrainerRole(current) ? { ...name, level } : name
+    await updateDoc(doc(db, 'profiles', owner), { ...changes, name: deleteField() })
+    if (trainerOwner.value !== owner) return
+    if (delegated) impersonatedTrainer.value = { ...current, ...changes }
+    else profile.value = { ...current, ...changes }
+    trainers.value = trainers.value.map(trainer => trainer.id === owner
       ? { ...trainer, ...changes } : trainer).sort((a, b) => fullProfileName(a).localeCompare(fullProfileName(b), 'nl'))
     notice.value = 'Profiel opgeslagen.'
   }, 'Je profiel kon niet worden opgeslagen.')
@@ -185,11 +194,41 @@ const error = ref('')
 const notice = ref('')
 const mode = ref('beheerder')
 const trainerDraft = ref(null)
+const impersonatedTrainer = ref(null)
 const hasTrainerRole = current => current?.role === 'trainer' || current?.trainer === true
 const canTrain = current => hasTrainerRole(current) && (current.status ?? 'active') === 'active' &&
   [1, 2, 3, 4].includes(current.level)
-const isAdmin = computed(() => profile.value?.role === 'beheerder' && mode.value === 'beheerder')
+const isAdmin = computed(() => profile.value?.role === 'beheerder' && mode.value === 'beheerder' && !impersonatedTrainer.value)
+const canImpersonate = current => current?.role === 'beheerder' && current.godmode === true &&
+  (current.status ?? 'active') === 'active'
+const trainerOwner = computed(() => impersonatedTrainer.value?.id ?? account.value?.uid)
+const trainerProfile = computed(() => impersonatedTrainer.value ?? profile.value)
 const statusLabel = current => ({ pending: 'Wacht op verificatie', inactive: 'Inactief', deleted: 'Verwijderd' })[current.status] ?? 'Actief'
+
+function impersonateTrainer(trainer) {
+  if (busy.value || !isAdmin.value || !canImpersonate(profile.value) ||
+      !canTrain(trainer) || trainer.id === account.value.uid) return
+  const actor = account.value.uid
+  return action(async () => {
+    const [administrator, target] = await Promise.all([
+      getDoc(doc(db, 'profiles', actor)),
+      getDoc(doc(db, 'profiles', trainer.id)),
+    ])
+    if (account.value?.uid !== actor || !isAdmin.value || panel.value !== 'trainers') return
+    if (!canImpersonate(administrator.data()) || !canTrain(target.data())) {
+      throw { userMessage: 'De trainerweergave is niet beschikbaar voor dit account.' }
+    }
+    impersonatedTrainer.value = { ...target.data(), id: trainer.id }
+    uid.value = trainer.id
+    navigate('dashboard')
+  }, 'De trainerweergave kon niet worden geopend.')
+}
+
+function stopImpersonating() {
+  impersonatedTrainer.value = null
+  uid.value = declarationTrainers.value[0]?.id ?? ''
+  navigate('trainers')
+}
 
 function switchMode(value) {
   navigate('declarations')
@@ -438,15 +477,15 @@ const annualTotals = computed(() => yearMonths.value.reduce((sum, item) => {
   return sum
 }, { units: [0, 0, 0, 0, 0], total: 0 }))
 
-watch([panel, account, isAdmin], async ([destination, user, admin], _, onCleanup) => {
-  if (!user || destination !== (admin ? 'annualAdmin' : 'annual')) return
+watch([panel, trainerOwner, isAdmin], async ([destination, owner, admin], _, onCleanup) => {
+  if (!owner || destination !== (admin ? 'annualAdmin' : 'annual')) return
   let active = true
   onCleanup(() => { active = false })
   annualMonths.value = []
   annualError.value = false
   annualLoading.value = true
   try {
-    const owners = admin ? declarationTrainers.value.map(trainer => trainer.id) : [user.uid]
+    const owners = admin ? declarationTrainers.value.map(trainer => trainer.id) : [owner]
     const headers = await Promise.all(owners.map(owner => getDocs(collection(db, 'profiles', owner, 'months'))))
     if (!active) return
     const months = await Promise.all(headers.flatMap(snapshot => snapshot.docs).map(async header => {
@@ -488,6 +527,7 @@ if (auth) onAuthStateChanged(auth, async (user) => {
   loading.value = true
   if (menu.value) menu.value.open = false
   account.value = user
+  impersonatedTrainer.value = null
   passwordDraft.value = null
   profile.value = null
   uid.value = ''
@@ -542,14 +582,14 @@ if (auth) onAuthStateChanged(auth, async (user) => {
 })
 
 const monthRef = (owner, period) => doc(db, 'profiles', owner, 'months', period)
-watch([account, profile, isAdmin, panel, trainers], () => {
+watch([account, profile, isAdmin, panel, trainers, trainerOwner], () => {
   monthNotifications.value = []
   refreshMonthNotifications()
 })
 const pendingOccurrences = ref([])
 const occurrenceLoadError = ref(false)
 const occurrencesLoading = ref(false)
-const canReviewOccurrences = computed(() => !!account.value && !!profile.value && !isAdmin.value && canTrain(profile.value))
+const canReviewOccurrences = computed(() => !!account.value && !isAdmin.value && canTrain(trainerProfile.value))
 let occurrenceRead = 0
 
 async function loadOccurrences() {
@@ -561,7 +601,7 @@ async function loadOccurrences() {
     return
   }
   occurrencesLoading.value = true
-  const owner = account.value.uid
+  const owner = trainerOwner.value
   const through = today()
   try {
     const [rules, decisions] = await Promise.all([
@@ -599,8 +639,8 @@ async function loadOccurrences() {
   }
 }
 
-watch([canReviewOccurrences, account, panel], ([, user], [, previousUser]) => {
-  if (user !== previousUser) pendingOccurrences.value = []
+watch([canReviewOccurrences, trainerOwner, panel], ([, owner], [, previousOwner]) => {
+  if (owner !== previousOwner) pendingOccurrences.value = []
   loadOccurrences()
 })
 onMounted(() => window.addEventListener('focus', loadOccurrences))
@@ -613,35 +653,42 @@ async function initializeDeclarationMonth(tx, target, trainer) {
 }
 
 function reviewOccurrence(item, approved) {
-  const owner = account.value.uid
-  const trainer = profile.value
+  const owner = trainerOwner.value
+  const trainer = trainerProfile.value
   const target = monthRef(owner, item.date.slice(0, 7))
   const entry = doc(target, 'entries', item.date.slice(-2))
   const decision = doc(db, 'profiles', owner, 'recurringDecisions', item.id)
   return action(async () => {
-    await runTransaction(db, async tx => {
-      const previous = await tx.get(decision)
-      if (previous.exists()) return
-      const existing = await tx.get(entry)
-      if (existing.exists()) return
-      const schedule = await tx.get(doc(db, 'profiles', owner, 'recurringDeclarations', item.ruleId))
-      const current = schedule.data()
-      if (!current || item.date > today() || !isOccurrence(current, item.date) ||
-        fields.some(([key]) => current[key] !== item.amounts[key])) {
-        throw { userMessage: 'Deze terugkerende declaratie is gewijzigd. Open de meldingen opnieuw.' }
-      }
-      if (approved) {
-        const header = await tx.get(target)
-        if (!['concept', 'rejected'].includes(header.data()?.status ?? 'concept')) {
-          throw { userMessage: 'Deze maanddeclaratie kan niet worden gewijzigd.' }
+    try {
+      await runTransaction(db, async tx => {
+        const previous = await tx.get(decision)
+        if (previous.exists()) return
+        const existing = await tx.get(entry)
+        if (existing.exists()) return
+        const schedule = await tx.get(doc(db, 'profiles', owner, 'recurringDeclarations', item.ruleId))
+        const current = schedule.data()
+        if (!current || item.date > today() || !isOccurrence(current, item.date) ||
+          fields.some(([key]) => current[key] !== item.amounts[key])) {
+          throw { userMessage: 'Deze terugkerende declaratie is gewijzigd. Open de meldingen opnieuw.' }
         }
-        if (!header.exists()) await initializeDeclarationMonth(tx, target, trainer)
-        tx.set(entry, { ...item.amounts, date: item.date, notes: '', createdAt: serverTimestamp() })
-      }
-      tx.set(decision, {
-        ruleId: item.ruleId, period: item.date.slice(0, 7), day: item.date.slice(-2), approved,
+        if (approved) {
+          const header = await tx.get(target)
+          if (!['concept', 'rejected'].includes(header.data()?.status ?? 'concept')) {
+            throw { userMessage: 'Deze maanddeclaratie kan niet worden gewijzigd.' }
+          }
+          if (!header.exists()) await initializeDeclarationMonth(tx, target, trainer)
+          tx.set(entry, { ...item.amounts, date: item.date, notes: '', createdAt: serverTimestamp() })
+        }
+        tx.set(decision, {
+          ruleId: item.ruleId, period: item.date.slice(0, 7), day: item.date.slice(-2), approved,
       })
-    })
+      })
+    } catch (failure) {
+      console.error(failure)
+      if (failure.userMessage) throw failure
+      const detail = [failure.code, failure.message].filter(Boolean).join(' · ') || String(failure)
+      throw { userMessage: 'De keuze kon niet worden opgeslagen. ' + detail }
+    }
     pendingOccurrences.value = pendingOccurrences.value.filter(row => row.id !== item.id && (!approved || row.date !== item.date))
     await loadOccurrences()
   }, 'De keuze kon niet worden opgeslagen.')
@@ -680,7 +727,7 @@ watch([panel, month, isAdmin], async ([destination, period, admin], _, onCleanup
 let addFromDashboard = false
 function openDashboardMonth(period) {
   month.value = period
-  uid.value = account.value.uid
+  uid.value = trainerOwner.value
   navigate('declarations')
 }
 function addDashboardDeclaration() {
@@ -723,6 +770,7 @@ watch([uid, month, panel], ([, , destination]) => {
   if (destination === 'declarations') loadMonth()
 })
 watch(entryDialog, dialog => dialog?.showModal(), { flush: 'post' })
+watch([account, uid, month, panel, isAdmin, declarationStatus], () => { signatureDraft.value = null })
 function changeMonth(offset) {
   const date = new Date((month.value || today().slice(0, 7)) + '-01T00:00:00Z')
   date.setUTCMonth(date.getUTCMonth() + offset)
@@ -789,8 +837,37 @@ function openEntry(row) {
   }
   for (const [key] of fields) editing.value[key] = row ? formatDecimal(row[key]) : ''
 }
-function changeDeclarationStatus(status) {
+const savedSignatureRef = (signer, kind) => doc(db, 'profiles', signer, 'signatures', kind)
+
+function openSignature(status) {
+  const signer = account.value.uid
+  const owner = uid.value
+  const period = month.value
   const previous = declarationStatus.value
+  const kind = status === 'approved' ? 'approval' : owner === signer ? 'submission' : 'delegatedSubmission'
+  return action(async () => {
+    const saved = (await getDoc(savedSignatureRef(signer, kind))).data()?.image ?? ''
+    if (account.value?.uid === signer && uid.value === owner && month.value === period &&
+        declarationStatus.value === previous && panel.value === 'declarations' &&
+        isAdmin.value === (kind === 'approval')) {
+      signatureDraft.value = { status, signer, owner, period, previous, kind, saved }
+    }
+  }, 'De opgeslagen handtekening kon niet worden opgehaald.')
+}
+
+function confirmSignature(signature) {
+  const draft = signatureDraft.value
+  if (draft && !busy.value) return changeDeclarationStatus(draft.status, { ...draft, ...signature })
+}
+
+function changeDeclarationStatus(status, signature) {
+  const previous = declarationStatus.value
+  const represented = impersonatedTrainer.value
+  const actor = account.value?.uid
+  const signing = status === 'approved' || (status === 'submitted' && !isAdmin.value)
+  if (signing && (!signature?.image || signature.previous !== previous ||
+      signature.signer !== account.value?.uid || signature.owner !== uid.value ||
+      signature.period !== month.value)) return
   const rejectionNote = status === 'rejected' ? rejectionDraft.value?.trim() : ''
   if (status === 'rejected' && !rejectionNote) {
     error.value = 'Vul een reden voor de afwijzing in.'
@@ -804,16 +881,57 @@ function changeDeclarationStatus(status) {
         if (!header.exists() || (header.data().status ?? 'concept') !== previous) {
           throw { userMessage: 'De declaratiestatus is gewijzigd. Het overzicht is vernieuwd.' }
         }
-        tx.update(target, { status, rejectionNote })
+        const changes = { status, rejectionNote }
+        if (signing) {
+          const { kind, signer, image, reuse } = signature
+          const saved = savedSignatureRef(signer, kind)
+          if (reuse) {
+            if ((await tx.get(saved)).data()?.image !== image) {
+              throw {
+                signatureChanged: true,
+                userMessage: 'Je opgeslagen handtekening is gewijzigd. Open het venster opnieuw.',
+              }
+            }
+          }
+          const signerProfile = await tx.get(doc(db, 'profiles', signer))
+          const signerName = fullProfileName(signerProfile.data())
+          if (!reuse) tx.set(saved, { image })
+          const field = kind === 'approval' ? 'approvalSignature' : 'submissionSignature'
+          changes[field] = { image, signerUid: signer, signerName, signedAt: serverTimestamp() }
+          if (kind === 'delegatedSubmission') changes[field].representedUid = signature.owner
+        }
+        if (status === 'concept') changes.submissionSignature = deleteField()
+        if (previous === 'approved') changes.approvalSignature = deleteField()
+        tx.update(target, changes)
       })
     } catch (failure) {
-      if (failure.userMessage) await loadMonth()
+      if (failure.signatureChanged) {
+        signatureDraft.value = null
+      } else if (failure.userMessage) {
+        await loadMonth()
+      }
       if (failure.code === 'permission-denied') {
         await loadMonth()
+        if (represented && actor && status === 'concept') {
+          const [administrator, trainer] = await Promise.allSettled([
+            getDoc(doc(db, 'profiles', actor)),
+            getDoc(doc(db, 'profiles', represented.id)),
+          ])
+          if (administrator.status === 'fulfilled' && !canImpersonate(administrator.value.data())) {
+            if (impersonatedTrainer.value?.id === represented.id) stopImpersonating()
+            throw { userMessage: 'Je beheerdersaccount heeft geen actieve toegang meer om namens deze trainer te werken.' }
+          }
+          if (trainer.status === 'fulfilled' && !canTrain(trainer.value.data())) {
+            if (impersonatedTrainer.value?.id === represented.id) stopImpersonating()
+            throw { userMessage: 'Deze trainer is niet meer actief. De indiening is niet ingetrokken.' }
+          }
+          throw { userMessage: 'De indiening kon namens de trainer niet worden ingetrokken. Controleer of de actuele Firestore-regels zijn gepubliceerd voor avw-declarations.' }
+        }
         throw { userMessage: 'Firestore weigert deze statuswijziging. Laat de beheerder de accorderingsregels controleren.' }
       }
       throw failure
     }
+    signatureDraft.value = null
     await loadMonth()
     await refreshMonthNotifications()
     notice.value = 'Declaratiestatus bijgewerkt.'
@@ -848,7 +966,7 @@ function saveEntry() {
       if (existing.exists() && original !== row.date) {
         throw { userMessage: 'Er bestaat al een regel voor deze datum. Open die regel om hem aan te passen.' }
       }
-      if (!header.exists()) await initializeDeclarationMonth(tx, target, profile.value)
+      if (!header.exists()) await initializeDeclarationMonth(tx, target, trainerProfile.value)
       tx.set(dest, { ...row, createdAt: row.createdAt ?? existing.data()?.createdAt ?? serverTimestamp() })
       if (source && original !== row.date) tx.delete(source)
     })
@@ -882,34 +1000,44 @@ function saveRates() {
     notice.value = 'Vergoedingen opgeslagen.'
   }, 'De staffel kon niet worden opgeslagen.')
 }
-const preparedExport = ref(null)
+const preparedPdf = ref(null)
 let exportVersion = 0
-function clearPreparedExport() {
+function clearPreparedPdf() {
   exportVersion++
-  if (preparedExport.value) URL.revokeObjectURL(preparedExport.value.url)
-  preparedExport.value = null
+  if (preparedPdf.value) URL.revokeObjectURL(preparedPdf.value.url)
+  preparedPdf.value = null
 }
-watch([month, uid, records, sheet, panel, account], clearPreparedExport)
-onUnmounted(clearPreparedExport)
+watch([month, uid, records, sheet, panel, account, isAdmin], clearPreparedPdf)
+onUnmounted(clearPreparedPdf)
 
-function exportSheet() {
-  clearPreparedExport()
+async function approvalSignerName(signature) {
+  if (!signature || signature.signerName) return signature?.signerName
+  if (signature.signerUid === account.value.uid) return fullProfileName(profile.value)
+  if (profile.value?.role === 'beheerder' && signature.signerUid) {
+    const signer = (await getDoc(doc(db, 'profiles', signature.signerUid))).data()
+    if (signer) return fullProfileName(signer)
+  }
+}
+
+function exportPdf() {
+  if (!sheet.value || reading.value || busy.value || declarationStatus.value !== 'approved') return
   const version = exportVersion
+  const period = month.value
+  const header = sheet.value
+  const entries = records.value
   return action(async () => {
-    try {
-      const { prepareDeclarationDownload } = await import('./export')
-      const result = await prepareDeclarationDownload(month.value, sheet.value, records.value)
-      if (version !== exportVersion) {
-        URL.revokeObjectURL(result.url)
-        return
-      }
-      preparedExport.value = result
-    } catch (failure) {
-      console.error(failure)
-      const detail = failure?.message || failure?.name || String(failure)
-      throw { userMessage: 'De Excel-export is mislukt. ' + detail }
+    const [{ preparePdfDownload }, approvalName] = await Promise.all([
+      import('./exportPdf'),
+      approvalSignerName(header.approvalSignature),
+    ])
+    if (version !== exportVersion) return
+    const result = await preparePdfDownload(period, header, entries, approvalName)
+    if (version !== exportVersion) {
+      URL.revokeObjectURL(result.url)
+      return
     }
-  }, 'De Excel-export is mislukt.')
+    preparedPdf.value = result
+  }, 'De PDF-export is mislukt.')
 }
 function resetPassword() {
   if (!document.querySelector('#email').reportValidity()) return
@@ -947,7 +1075,7 @@ function resetPassword() {
         <nav class="menu-links" aria-label="Hoofdnavigatie">
           <img class="menu-logo" :src="logo" alt="AVW Atletiekvereniging Wieringermeer e.o.">
           <template v-if="profile">
-            <span class="menu-user">{{ fullProfileName(profile) }} · {{ isAdmin ? 'Beheerder' : 'Trainer' }}{{ hasTrainerRole(profile) && profile.level ? ' · Niveau ' + profile.level : '' }}</span>
+            <span class="menu-user">{{ fullProfileName(trainerProfile) }} · {{ isAdmin ? 'Beheerder' : 'Trainer' }}{{ hasTrainerRole(trainerProfile) && trainerProfile.level ? ' · Niveau ' + trainerProfile.level : '' }}</span>
             <button :aria-current="panel === 'declarations' ? 'page' : undefined" :disabled="busy" @click="navigate('declarations')"><NavigationIcon name="declarations" />Declaraties</button>
             <button v-if="!isAdmin" :aria-current="panel === 'annual' ? 'page' : undefined" :disabled="busy" @click="navigate('annual')"><NavigationIcon name="annual" />Jaaroverzicht</button>
             <template v-if="isAdmin">
@@ -955,7 +1083,7 @@ function resetPassword() {
               <button :aria-current="panel === 'annualAdmin' ? 'page' : undefined" :disabled="busy" @click="navigate('annualAdmin')"><NavigationIcon name="annual" />Jaaroverzicht</button>
               <button :aria-current="panel === 'matrix' ? 'page' : undefined" :disabled="busy" @click="navigate('matrix')"><NavigationIcon name="matrix" />Matrix</button>
             </template>
-            <button v-if="profile.role === 'beheerder' && canTrain(profile)" :disabled="busy" @click="switchMode(isAdmin ? 'trainer' : 'beheerder')"><NavigationIcon name="switch" />Verder als {{ isAdmin ? 'trainer' : 'beheerder' }}</button>
+            <button v-if="!impersonatedTrainer && profile.role === 'beheerder' && canTrain(profile)" :disabled="busy" @click="switchMode(isAdmin ? 'trainer' : 'beheerder')"><NavigationIcon name="switch" />Verder als {{ isAdmin ? 'trainer' : 'beheerder' }}</button>
           </template>
           <div class="menu-bottom">
             <template v-if="profile && isAdmin">
@@ -963,7 +1091,7 @@ function resetPassword() {
               <button :aria-current="panel === 'administrators' ? 'page' : undefined" :disabled="busy" @click="navigate('administrators')"><NavigationIcon name="administrators" />Beheerders</button>
               <button :aria-current="panel === 'rates' ? 'page' : undefined" :disabled="busy" @click="navigate('rates')"><NavigationIcon name="rates" />Vergoedingen</button>
             </template>
-            <button v-if="profile && !isAdmin && canTrain(profile)" :aria-current="panel === 'recurring' ? 'page' : undefined" :disabled="busy" @click="navigate('recurring')"><NavigationIcon name="recurring" />Terugkerende declaraties</button>
+            <button v-if="trainerProfile && !isAdmin && canTrain(trainerProfile)" :aria-current="panel === 'recurring' ? 'page' : undefined" :disabled="busy" @click="navigate('recurring')"><NavigationIcon name="recurring" />Terugkerende declaraties</button>
             <hr class="menu-divider">
             <button v-if="profile" :aria-current="panel === 'profile' ? 'page' : undefined" :disabled="busy" @click="navigate('profile')"><NavigationIcon name="profile" />Profiel</button>
             <button class="menu-logout" :disabled="busy" @click="action(() => signOut(auth), 'Uitloggen is mislukt.')"><NavigationIcon name="logout" />Uitloggen</button>
@@ -994,11 +1122,15 @@ function resetPassword() {
       </form>
     </section>
     <template v-else-if="profile">
+      <div v-if="impersonatedTrainer" class="banner section-header">
+        <span>Je werkt namens <strong>{{ fullProfileName(impersonatedTrainer) }}</strong></span>
+        <button type="button" class="secondary" :disabled="busy" @click="stopImpersonating">Terug naar Trainers</button>
+      </div>
       <h1 v-if="panel !== 'dashboard'" class="page-heading page-heading-with-icon">
         <NavigationIcon :name="panel === 'trainerEdit' ? 'trainers' : panel === 'annualAdmin' ? 'annual' : panel === 'password' ? 'profile' : panel" />
         {{ pageTitle }}
       </h1>
-      <TrainerDashboard v-if="panel === 'dashboard' && !isAdmin" :owner="account.uid" :profile="profile"
+      <TrainerDashboard v-if="panel === 'dashboard' && !isAdmin" :key="trainerOwner" :owner="trainerOwner" :profile="trainerProfile"
         @open-month="openDashboardMonth" @add="addDashboardDeclaration" @view-all="viewDashboardYear" />
       <section v-else-if="panel === 'notifications' && canReviewOccurrences" class="card occurrence-list">
         <p v-if="occurrencesLoading" role="status">Meldingen laden…</p>
@@ -1027,15 +1159,15 @@ function resetPassword() {
           </div>
         </article>
       </section>
-      <RecurringDeclarations v-else-if="panel === 'recurring' && !isAdmin && canTrain(profile)" :key="account.uid" :owner="account.uid" />
+      <RecurringDeclarations v-else-if="panel === 'recurring' && !isAdmin && canTrain(trainerProfile)" :key="trainerOwner" :owner="trainerOwner" />
       <form v-else-if="panel === 'profile'" class="card settings" @submit.prevent="saveProfile">
         <ProfileNameFields v-model="profileDraft.name" :disabled="busy" />
-        <label v-if="hasTrainerRole(profile)">Niveau<select v-model="profileDraft.level" :disabled="busy" required>
+        <label v-if="hasTrainerRole(trainerProfile)">Niveau<select v-model="profileDraft.level" :disabled="busy" required>
           <option :value="null" disabled>Kies een niveau</option>
           <option v-for="level in 4" :key="level" :value="level">{{ level }}</option>
         </select></label>
         <button class="primary" :disabled="busy">Opslaan</button>
-        <button type="button" class="link" :disabled="busy" @click="navigate('password')">Wachtwoord wijzigen</button>
+        <button v-if="!impersonatedTrainer" type="button" class="link" :disabled="busy" @click="navigate('password')">Wachtwoord wijzigen</button>
       </form>
       <form v-else-if="panel === 'password' && passwordDraft" class="card settings" @submit.prevent="changePassword">
         <label>Huidig wachtwoord<input v-model="passwordDraft.current" type="password" autocomplete="current-password" :disabled="busy" required></label>
@@ -1066,11 +1198,16 @@ function resetPassword() {
         <ul class="entry-list trainer-list">
           <li v-for="trainer in trainers" :key="trainer.id">
             <div><strong>{{ fullProfileName(trainer) }}</strong><p class="muted">{{ statusLabel(trainer) }} · Niveau {{ trainer.level ?? 'instellen' }}</p></div>
-            <button class="secondary" :disabled="busy" :aria-label="trainer.status === 'pending' ? undefined : 'Trainer bewerken'" @click="openTrainer(trainer)">
-              <template v-if="trainer.status === 'pending'">Verifiëren</template>
-              <EditIcon v-else />
-            </button>
-            <button v-if="trainer.status === 'pending'" class="secondary danger" :disabled="busy" @click="rejectTrainer(trainer)">Afkeuren</button>
+            <div class="form-actions">
+              <button class="secondary" :disabled="busy" :aria-label="trainer.status === 'pending' ? undefined : 'Trainer bewerken'" @click="openTrainer(trainer)">
+                <template v-if="trainer.status === 'pending'">Verifiëren</template>
+                <EditIcon v-else />
+              </button>
+              <button v-if="trainer.status === 'pending'" class="secondary danger" :disabled="busy" @click="rejectTrainer(trainer)">Afkeuren</button>
+              <button v-if="isAdmin && canImpersonate(profile) && canTrain(trainer) && trainer.id !== account.uid"
+                type="button" class="secondary" :disabled="busy" :aria-label="'Werken namens ' + fullProfileName(trainer)"
+                title="Werken namens trainer" @click="impersonateTrainer(trainer)"><NavigationIcon name="impersonate" /></button>
+            </div>
           </li>
         </ul>
       </section>
@@ -1242,14 +1379,6 @@ function resetPassword() {
               <button class="secondary" aria-label="Volgende maand" :disabled="busy" @click="changeMonth(1)">›</button>
             </span>
           </label>
-          <a v-if="preparedExport" class="secondary export-download" :href="preparedExport.url" :download="preparedExport.name">Excel downloaden</a>
-          <button v-else class="secondary" :disabled="!sheet || reading || busy" @click="exportSheet">
-            <svg class="export-icon" viewBox="0 0 20 20" aria-hidden="true">
-              <rect x="2" y="2" width="16" height="16" rx="3" fill="#107c41"/>
-              <path d="m6.5 6.5 7 7m0-7-7 7" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/>
-            </svg>
-            Exporteren
-          </button>
         </section>
         <p v-if="reading" role="status">Declaratie laden…</p>
         <template v-else>
@@ -1257,10 +1386,10 @@ function resetPassword() {
             <div class="section-header">
               <strong>{{ declarationStatuses[declarationStatus] }}</strong>
               <div class="form-actions">
-                <button v-if="canEditEntries && records.length" type="button" class="secondary" :disabled="busy" @click="changeDeclarationStatus('submitted')">Declaratie indienen</button>
+                <button v-if="canEditEntries && records.length" type="button" class="secondary" :disabled="busy" @click="openSignature('submitted')">Declaratie indienen</button>
                 <button v-if="!isAdmin && declarationStatus === 'submitted'" type="button" class="secondary" :disabled="busy" @click="changeDeclarationStatus('concept')">Indiening intrekken</button>
                 <template v-if="isAdmin && declarationStatus === 'submitted'">
-                  <button type="button" class="secondary declaration-approved" :disabled="busy" @click="changeDeclarationStatus('approved')">Goedkeuren</button>
+                  <button type="button" class="secondary declaration-approved" :disabled="busy" @click="openSignature('approved')">Goedkeuren</button>
                   <button type="button" class="secondary danger declaration-rejected" :disabled="busy" @click="rejectionDraft = ''">Afwijzen</button>
                 </template>
                 <button v-if="isAdmin && ['approved', 'rejected'].includes(declarationStatus)" type="button" class="secondary" :disabled="busy" @click="changeDeclarationStatus('submitted')">{{ declarationStatus === 'approved' ? 'Goedkeuring intrekken' : 'Afwijzing intrekken' }}</button>
@@ -1275,6 +1404,14 @@ function resetPassword() {
               </div>
             </form>
           </section>
+          <template v-if="declarationStatus === 'approved'">
+            <a v-if="preparedPdf" class="pdf-action" :href="preparedPdf.url" :download="preparedPdf.name">
+              <NavigationIcon name="pdf" /> PDF downloaden
+            </a>
+            <button v-else type="button" class="pdf-action" :disabled="busy" @click="exportPdf">
+              <NavigationIcon name="pdf" /> Exporteren naar PDF
+            </button>
+          </template>
           <DeclarationTotals :totals="totals" compact-labels />
           <button v-if="canEditEntries" class="primary add-declaration" :disabled="!month || busy" @click="openEntry()">Declaratie toevoegen</button>
           <section class="card entries">
@@ -1298,6 +1435,9 @@ function resetPassword() {
           </section>
         </template>
       </template>
+      <SignatureDialog v-if="signatureDraft" :saved="signatureDraft.saved" :busy="busy" :error="error"
+        :label="signatureDraft.kind === 'approval' ? 'Declaratie goedkeuren' : signatureDraft.kind === 'delegatedSubmission' ? 'Indienen namens trainer' : 'Declaratie indienen'"
+        @close="signatureDraft = null" @sign="confirmSignature" />
       <dialog v-if="editing" ref="entryDialog" aria-labelledby="entry-title" @cancel.prevent="!busy && (editing = null)">
         <form @submit.prevent="saveEntry">
           <div class="section-header"><h2 id="entry-title">{{ editing.original ? 'Declaratie aanpassen' : 'Toevoegen' }}</h2><button type="button" class="secondary" :disabled="busy" @click="editing = null">Sluiten</button></div>
