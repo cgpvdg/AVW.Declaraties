@@ -108,7 +108,19 @@ service cloud.firestore {
     }
     match /settings/rates {
       allow read: if role('beheerder') || (request.auth != null && trainer(request.auth.uid));
-      allow create, update: if role('beheerder') && validRate(request.resource.data);
+      match /years/{year} {
+        allow get: if role('beheerder') || (request.auth != null && trainer(request.auth.uid));
+        allow list: if role('beheerder');
+        allow create, update: if role('beheerder') && year.matches('[0-9]{4}') &&
+          validRate(request.resource.data);
+      }
+    }
+    function ratesForMonth(month) {
+      let year = month.split('-')[0];
+      let annual = /databases/$(database)/documents/settings/rates/years/$(year);
+      return existsAfter(annual)
+        ? getAfter(annual).data
+        : get(/databases/$(database)/documents/settings/rates).data;
     }
     match /profiles/{uid}/recurringDeclarations/{id} {
       allow read: if canActAsTrainer(uid);
@@ -176,8 +188,8 @@ service cloud.firestore {
         request.resource.data.name == fullProfileName(get(/databases/$(database)/documents/profiles/$(uid)).data) &&
         request.resource.data.level == get(/databases/$(database)/documents/profiles/$(uid)).data.level &&
         request.resource.data.level in [1,2,3,4] &&
-        request.resource.data.rates == get(/databases/$(database)/documents/settings/rates).data;
-      allow update: if validDeclarationTransition(uid);
+        request.resource.data.rates == ratesForMonth(month);
+      allow update: if validDeclarationTransition(uid, month);
       match /entries/{day} {
         allow read: if role('beheerder') || trainer(uid);
         allow delete: if canActAsTrainer(uid) && editableDeclaration(uid, month);
@@ -189,7 +201,7 @@ service cloud.firestore {
       return getAfter(/databases/$(database)/documents/profiles/$(uid)/months/$(month))
         .data.get('status', 'concept') in ['concept', 'rejected'];
     }
-    function validDeclarationTransition(uid) {
+    function validDeclarationTransition(uid, month) {
       let previous = resource.data.get('status', 'concept');
       let next = request.resource.data.status;
       let note = request.resource.data.rejectionNote;
@@ -208,7 +220,8 @@ service cloud.firestore {
               !data.keys().hasAny(['submissionSignature'])))) ||
           (role('beheerder') &&
             ((previous == 'submitted' && next == 'approved' &&
-                changed.hasOnly(['status','rejectionNote','approvalSignature']) &&
+                changed.hasOnly(['status','rejectionNote','approvalSignature','rates']) &&
+                data.rates == ratesForMonth(month) &&
                 validDeclarationSignature(data.approvalSignature, 'approval', uid)) ||
               (((previous == 'submitted' && next == 'rejected') ||
                   (previous == 'rejected' && next == 'submitted')) &&

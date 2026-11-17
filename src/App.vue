@@ -16,6 +16,7 @@ import RecurringDeclarations from './RecurringDeclarations.vue'
 import TrainerDashboard from './TrainerDashboard.vue'
 import { isOccurrence, occurrenceDates } from './recurringOccurrences'
 import { fullProfileName, legacyNameMigration, profileNameParts } from './profileName'
+import { annualRateRef, annualRatesRef, declarationRates, rateReader } from './rates'
 
 const registering = ref(false)
 const registration = ref({ name: profileNameParts(), level: 1 })
@@ -37,6 +38,16 @@ const declarationStatus = computed(() => sheet.value?.status ?? 'concept')
 const canEditEntries = computed(() => !isAdmin.value && ['concept', 'rejected'].includes(declarationStatus.value))
 const entryDialog = ref(null)
 const rateDraft = ref(formatRates(initialRates))
+const rateYear = ref(today().slice(0, 4))
+const validRateYear = computed(() => /^[0-9]{4}$/.test(rateYear.value))
+const rateYears = ref([])
+const rateYearsLoading = ref(false)
+const rateYearsError = ref(false)
+const addingRateYear = ref(false)
+let previousRateYear
+const ratesLoading = ref(false)
+const rateLoadError = ref(false)
+const hasAnnualRates = ref(false)
 const editing = ref(null)
 const panel = ref('declarations')
 const pageTitle = computed(() => ({
@@ -488,10 +499,13 @@ watch([panel, trainerOwner, isAdmin], async ([destination, owner, admin], _, onC
     const owners = admin ? declarationTrainers.value.map(trainer => trainer.id) : [owner]
     const headers = await Promise.all(owners.map(owner => getDocs(collection(db, 'profiles', owner, 'months'))))
     if (!active) return
+    const readRates = rateReader()
     const months = await Promise.all(headers.flatMap(snapshot => snapshot.docs).map(async header => {
       const entries = await getDocs(collection(header.ref, 'entries'))
       if (entries.empty) return null
-      const { rates, level, status = 'concept' } = header.data()
+      const data = header.data()
+      const { level, status = 'concept' } = data
+      const rates = await declarationRates(header.id, data, readRates)
       return { period: header.id, status, ...summarize(entries.docs.map(entry => entry.data()), rates, level) }
     }))
     if (!active) return
@@ -508,7 +522,6 @@ watch([panel, trainerOwner, isAdmin], async ([destination, owner, admin], _, onC
 const displayRecords = computed(() => [...records.value].reverse())
 const totals = computed(() => summarize(records.value, sheet.value?.rates, sheet.value?.level))
 const caption = computed(() => month.value ? monthLabel.format(new Date(month.value + '-01T00:00:00Z')) : 'Kies een maand')
-const rateRef = () => doc(db, 'settings', 'rates')
 
 async function action(callback, message) {
   busy.value = true
@@ -561,13 +574,9 @@ if (auth) onAuthStateChanged(auth, async (user) => {
       return
     }
     mode.value = current.role
-    const [rateSnap, users] = await Promise.all([
-      getDoc(rateRef()),
-      current.role === 'beheerder' ? getDocs(collection(db, 'profiles')) : null,
-    ])
+    const users = current.role === 'beheerder' ? await getDocs(collection(db, 'profiles')) : null
     if (version !== authVersion) return
 
-    rateDraft.value = formatRates(rateSnap.data() ?? initialRates)
     const owners = users ? users.docs.map(item => ({ id: item.id, data: item.data() })) : [{ id: user.uid, data: current }]
     const migrated = await Promise.all(owners.map(async ({ id, data }) => ({ ...await migrateProfileName(id, data), id })))
     if (version !== authVersion) return
@@ -646,10 +655,16 @@ watch([canReviewOccurrences, trainerOwner, panel], ([, owner], [, previousOwner]
 onMounted(() => window.addEventListener('focus', loadOccurrences))
 onUnmounted(() => window.removeEventListener('focus', loadOccurrences))
 
+async function configuredMonthRates(tx, period) {
+  const year = period.slice(0, 4)
+  const { rates } = await rateReader(reference => tx.get(reference))(year)
+  if (!rates) throw { userMessage: 'De beheerder moet eerst de vergoedingenstaffel voor ' + year + ' opslaan.' }
+  return rates
+}
+
 async function initializeDeclarationMonth(tx, target, trainer) {
-  const currentRates = await tx.get(rateRef())
-  if (!currentRates.exists()) throw { userMessage: 'De beheerder moet eerst de vergoedingenstaffel opslaan.' }
-  tx.set(target, { name: fullProfileName(trainer), level: trainer.level, rates: currentRates.data() })
+  const rates = await configuredMonthRates(tx, target.id)
+  tx.set(target, { name: fullProfileName(trainer), level: trainer.level, rates })
 }
 
 function reviewOccurrence(item, approved) {
@@ -708,12 +723,14 @@ watch([panel, month, isAdmin], async ([destination, period, admin], _, onCleanup
   overviewLoading.value = Boolean(period)
   if (!period) return
   try {
+    const readRates = rateReader()
     const rows = await Promise.all(declarationTrainers.value.map(async trainer => {
       const target = monthRef(trainer.id, period)
       const header = (await getDoc(target)).data()
       if (!header) return { trainer, total: 0, status: 'concept' }
       const entries = await getDocs(collection(target, 'entries'))
-      return { trainer, status: header.status ?? 'concept', total: summarize(entries.docs.map(entry => entry.data()), header.rates, header.level).total }
+      const rates = await declarationRates(period, header, readRates)
+      return { trainer, status: header.status ?? 'concept', total: summarize(entries.docs.map(entry => entry.data()), rates, header.level).total }
     }))
     if (active) overviewRows.value = rows
   } catch (failure) {
@@ -751,7 +768,10 @@ async function loadMonth() {
   try {
     const [header, lines] = await Promise.all([getDoc(target), getDocs(collection(target, 'entries'))])
     if (version !== readVersion) return
-    sheet.value = header.data() ?? null
+    const data = header.data()
+    const rates = data && await declarationRates(target.id, data, rateReader())
+    if (version !== readVersion) return
+    sheet.value = data ? { ...data, rates } : null
     records.value = lines.docs.map(item => item.data()).sort((a, b) => a.date.localeCompare(b.date))
     if (addFromDashboard) {
       addFromDashboard = false
@@ -882,6 +902,7 @@ function changeDeclarationStatus(status, signature) {
           throw { userMessage: 'De declaratiestatus is gewijzigd. Het overzicht is vernieuwd.' }
         }
         const changes = { status, rejectionNote }
+        if (status === 'approved') changes.rates = await configuredMonthRates(tx, target.id)
         if (signing) {
           const { kind, signer, image, reuse } = signature
           const saved = savedSignatureRef(signer, kind)
@@ -987,17 +1008,79 @@ function removeEntry() {
     await loadOccurrences()
   }, 'De regel kon niet worden verwijderd.')
 }
+watch([panel, isAdmin, account], async ([destination, admin], _, onCleanup) => {
+  if (destination !== 'rates' || !admin) return
+  let active = true
+  onCleanup(() => { active = false })
+  addingRateYear.value = false
+  rateYearsLoading.value = true
+  rateYearsError.value = false
+  rateYears.value = []
+  try {
+    const snapshot = await getDocs(annualRatesRef())
+    if (!active) return
+    rateYears.value = snapshot.docs.map(item => item.id).filter(year => /^[0-9]{4}$/.test(year)).sort().reverse()
+    if (!rateYears.value.includes(rateYear.value)) {
+      rateYear.value = rateYears.value[0] ?? today().slice(0, 4)
+    }
+  } catch (failure) {
+    if (active) rateYearsError.value = true
+    console.error(failure)
+  } finally {
+    if (active) rateYearsLoading.value = false
+  }
+})
+
+function addRateYear() {
+  previousRateYear = rateYear.value
+  let year = Number(today().slice(0, 4))
+  while (year <= 9999 && rateYears.value.includes(String(year))) year++
+  rateYear.value = year <= 9999 ? String(year) : ''
+  addingRateYear.value = true
+}
+
+function cancelRateYear() {
+  rateYear.value = previousRateYear
+  addingRateYear.value = false
+}
+
+watch([panel, rateYear, isAdmin, account], async ([destination, year, admin], _, onCleanup) => {
+  ratesLoading.value = false
+  rateLoadError.value = false
+  hasAnnualRates.value = false
+  if (destination !== 'rates' || !admin || !validRateYear.value) return
+  let active = true
+  onCleanup(() => { active = false })
+  ratesLoading.value = true
+  try {
+    const { rates, annual } = await rateReader()(year)
+    if (!active) return
+    rateDraft.value = formatRates(rates ?? initialRates)
+    hasAnnualRates.value = annual
+  } catch (failure) {
+    if (active) rateLoadError.value = true
+    console.error(failure)
+  } finally {
+    if (active) ratesLoading.value = false
+  }
+})
+
 function saveRates() {
+  if (!isAdmin.value || !validRateYear.value || rateYearsLoading.value || ratesLoading.value || rateLoadError.value || busy.value) return
+  const year = rateYear.value
   return action(async () => {
     const values = Object.entries(rateDraft.value).map(([key, value]) => [key, value ? parseDecimal(value) : NaN])
     if (values.some(([, value]) => !Number.isFinite(value) || value < 0 || value > 100000)) {
       throw { userMessage: 'Vul voor elk tarief een bedrag tussen 0,00 en 100.000,00 in.' }
     }
     const rates = Object.fromEntries(values)
-    await setDoc(rateRef(), rates)
+    await setDoc(annualRateRef(year), rates)
+    if (rateYear.value !== year || panel.value !== 'rates') return
     rateDraft.value = formatRates(rates)
-
-    notice.value = 'Vergoedingen opgeslagen.'
+    hasAnnualRates.value = true
+    if (!rateYears.value.includes(year)) rateYears.value = [...rateYears.value, year].sort().reverse()
+    addingRateYear.value = false
+    notice.value = 'Vergoedingen voor ' + year + ' opgeslagen.'
   }, 'De staffel kon niet worden opgeslagen.')
 }
 const preparedPdf = ref(null)
@@ -1354,15 +1437,35 @@ function resetPassword() {
         </template>
       </template>
       <form v-else-if="panel === 'rates'" class="card settings" @submit.prevent="saveRates">
-        <p class="muted">De ingestelde tarieven gelden voor nieuw aangemaakte maanddeclaraties.</p>
-        <fieldset :disabled="busy" class="form-grid rate-grid">
+        <p v-if="rateYearsLoading" role="status">Jaren laden…</p>
+        <p v-else-if="rateYearsError" role="alert">De opgeslagen jaren konden niet worden geladen. Open Vergoedingen opnieuw om het nog eens te proberen.</p>
+        <template v-if="!rateYearsLoading">
+          <template v-if="rateYears.length && !addingRateYear">
+            <label>Jaar
+              <select v-model="rateYear" :disabled="busy">
+                <option v-for="year in rateYears" :key="year" :value="year">{{ year }}</option>
+              </select>
+            </label>
+            <button type="button" class="secondary" :disabled="busy" @click="addRateYear">Jaar toevoegen</button>
+          </template>
+          <template v-else>
+            <label>{{ addingRateYear ? 'Nieuw jaar' : 'Jaar' }}
+              <input v-model="rateYear" type="text" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" required :disabled="busy">
+            </label>
+            <button v-if="addingRateYear" type="button" class="secondary" :disabled="busy" @click="cancelRateYear">Annuleren</button>
+          </template>
+        </template>
+        <p v-if="ratesLoading" role="status">Staffel laden…</p>
+        <p v-else-if="rateLoadError" role="alert">De staffel voor {{ rateYear }} kon niet worden geladen.</p>
+        <p v-else-if="validRateYear && !hasAnnualRates" class="muted">Voor {{ rateYear }} is nog geen jaarstaffel opgeslagen. Controleer de voorgestelde tarieven voordat je ze opslaat.</p>
+        <fieldset :disabled="busy || !validRateYear || rateYearsLoading || ratesLoading || rateLoadError" class="form-grid rate-grid">
           <label v-for="level in 4" :key="level">Niveau {{ level }} · €/uur
             <span class="currency-field"><span v-if="rateDraft['level' + level]" class="currency-prefix" aria-hidden="true">€</span><input :value="rateDraft['level' + level]" type="text" inputmode="decimal" placeholder="€ 0,00" @input="maskDecimal($event, rateDraft, 'level' + level)" @blur="finishDecimal(rateDraft, 'level' + level)" required></span>
           </label>
           <label>Begeleiding · €/uur<span class="currency-field"><span v-if="rateDraft['guidance']" class="currency-prefix" aria-hidden="true">€</span><input :value="rateDraft['guidance']" type="text" inputmode="decimal" placeholder="€ 0,00" @input="maskDecimal($event, rateDraft, 'guidance')" @blur="finishDecimal(rateDraft, 'guidance')" required></span></label>
           <label>Kilometervergoeding · €/km<span class="currency-field"><span v-if="rateDraft['kilometers']" class="currency-prefix" aria-hidden="true">€</span><input :value="rateDraft['kilometers']" type="text" inputmode="decimal" placeholder="€ 0,00" @input="maskDecimal($event, rateDraft, 'kilometers')" @blur="finishDecimal(rateDraft, 'kilometers')" required></span></label>
         </fieldset>
-        <button class="primary" :disabled="busy">Staffel opslaan</button>
+        <button class="primary" :disabled="busy || !validRateYear || rateYearsLoading || ratesLoading || rateLoadError">Staffel opslaan</button>
       </form>
       <template v-else>
         <section class="card period">

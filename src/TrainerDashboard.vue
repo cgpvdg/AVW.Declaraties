@@ -1,15 +1,17 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { collection, doc, getDoc, getDocs } from 'firebase/firestore/lite'
+import { collection, getDocs } from 'firebase/firestore/lite'
 import { db } from './firebase'
 import { dateLabel, euro, fields, summarize, today } from './model'
 import NavigationIcon from './NavigationIcon.vue'
+import { declarationRates, rateReader } from './rates'
 
 const props = defineProps({ owner: String, profile: Object })
 defineEmits(['open-month', 'add', 'view-all'])
 const year = ref(today().slice(0, 4))
 const months = ref([])
-const rates = ref(null)
+const ratesByYear = ref({})
+const rates = computed(() => ratesByYear.value[year.value])
 const loading = ref(true)
 const failed = ref(false)
 const statuses = { concept: 'Concept', submitted: 'Ingediend', approved: 'Goedgekeurd', rejected: 'Afgewezen' }
@@ -23,25 +25,29 @@ async function load() {
   loading.value = true
   failed.value = false
   try {
-    const [headers, rateSnapshot] = await Promise.all([
-      getDocs(collection(db, 'profiles', props.owner, 'months')),
-      getDoc(doc(db, 'settings', 'rates')),
+    const headers = await getDocs(collection(db, 'profiles', props.owner, 'months'))
+    const readRates = rateReader()
+    const yearsWithRates = new Set([today().slice(0, 4), ...headers.docs.map(header => header.id.slice(0, 4))])
+    const [configured, declarations] = await Promise.all([
+      Promise.all([...yearsWithRates].map(async year => [year, (await readRates(year)).rates])),
+      Promise.all(headers.docs.map(async header => {
+        const entries = await getDocs(collection(header.ref, 'entries'))
+        if (entries.empty) return null
+        const data = header.data()
+        const rates = await declarationRates(header.id, data, readRates)
+        return {
+          period: header.id, status: data.status ?? 'concept',
+          total: summarize(entries.docs.map(entry => entry.data()), rates, data.level).total,
+          entries: entries.docs.map(entry => {
+            const row = entry.data()
+            return { ...row, created: row.createdAt?.toMillis() ?? Date.parse(row.date + 'T00:00:00Z'),
+              total: summarize([row], rates, data.level).total }
+          }),
+        }
+      })),
     ])
-    months.value = (await Promise.all(headers.docs.map(async header => {
-      const entries = await getDocs(collection(header.ref, 'entries'))
-      if (entries.empty) return null
-      const data = header.data()
-      return {
-        period: header.id, status: data.status ?? 'concept',
-        total: summarize(entries.docs.map(entry => entry.data()), data.rates, data.level).total,
-        entries: entries.docs.map(entry => {
-          const row = entry.data()
-          return { ...row, created: row.createdAt?.toMillis() ?? Date.parse(row.date + 'T00:00:00Z'),
-            total: summarize([row], data.rates, data.level).total }
-        }),
-      }
-    }))).filter(Boolean).sort((a, b) => b.period.localeCompare(a.period))
-    rates.value = rateSnapshot.data() ?? null
+    months.value = declarations.filter(Boolean).sort((a, b) => b.period.localeCompare(a.period))
+    ratesByYear.value = Object.fromEntries(configured)
   } catch (failure) {
     console.error(failure)
     failed.value = true

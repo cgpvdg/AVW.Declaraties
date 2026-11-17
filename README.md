@@ -23,9 +23,9 @@ Mobiele Vue-app voor maanddeclaraties van Atletiekvereniging Wieringermeer e.o.
    | `role` | string | `trainer` of `beheerder` |
    | `level` | number | 1 t/m 4 voor trainers |
 
-5. Log als beheerder in en sla de vergoedingenstaffel op. De voorgestelde bedragen komen uit het Excel-voorbeeld. Controleer ze vóór het eerste gebruik.
+5. Log als beheerder in en sla onder **Vergoedingen** de staffel op voor elk declaratiejaar. Gebruik **Jaar toevoegen** voor een nieuwe staffel en de jaarkeuze om een bestaande staffel te wijzigen. Controleer de voorgestelde bedragen vóór het opslaan.
 
-Rollen en niveaus worden beheerd in de Firebase-console. Firestore-regels beperken trainers tot hun eigen declaraties en geven beheerders leesrechten op declaraties en schrijfrechten op de staffel. Bij de eerste regel van elke maand wordt de dan geldende staffel samen met de naam en het niveau van de trainer vastgelegd.
+Rollen en niveaus worden beheerd in de Firebase-console. Firestore-regels beperken trainers tot hun eigen declaraties en geven beheerders leesrechten op declaraties en schrijfrechten op de staffel. De declaratiemaand bepaalt welke jaarstaffel geldt. Jaren zonder eigen staffel gebruiken de oude algemene staffel, als die aanwezig is. Bij goedkeuring worden de actuele tarieven op de declaratie vastgelegd. Zolang de declaratie goedgekeurd blijft, verandert de vergoeding niet bij een staffelwijziging.
 
 ## Gebruik
 
