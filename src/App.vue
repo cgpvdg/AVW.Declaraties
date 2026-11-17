@@ -157,7 +157,7 @@ function createAdministrator() {
   return action(async () => {
     try {
       await createManagedAccount(email, password, id =>
-        setDoc(doc(db, 'profiles', id), { ...name, email, role: 'beheerder', status: 'active' }))
+        setDoc(doc(db, 'profiles', id), { ...name, role: 'beheerder', status: 'active' }))
     } catch (failure) {
       if (failure.code === 'auth/email-already-in-use') {
         throw { userMessage: 'Dit e-mailadres is al in gebruik.' }
@@ -983,8 +983,7 @@ function resetPassword() {
             <li v-for="administrator in administrators" :key="administrator.id">
               <div>
                 <strong>{{ fullProfileName(administrator) }}</strong>
-                <p v-if="administrator.id === account.uid" class="muted">{{ account.email || administrator.email }} • Eigen account</p>
-                <p v-else-if="administrator.email" class="muted">{{ administrator.email }}</p>
+                <p v-if="administrator.id === account.uid" class="muted">{{ account.email }} • Eigen account</p>
                 <p v-if="(administrator.status ?? 'active') !== 'active'" class="muted">Inactief</p>
               </div>
               <button type="button" class="secondary" :disabled="busy" :aria-label="'Beheerder wijzigen: ' + fullProfileName(administrator)"

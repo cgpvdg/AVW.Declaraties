@@ -53,11 +53,9 @@ service cloud.firestore {
         request.resource.data.keys().hasOnly(['name','firstName','namePrefix','lastName','level','role','status']) && validTrainer(request.resource.data) &&
         !exists(/databases/$(database)/documents/rejectedTrainers/$(uid));
       allow create: if role('beheerder') && request.auth.uid != uid &&
-        request.resource.data.keys().hasOnly(['firstName','namePrefix','lastName','email','role','status']) &&
+        request.resource.data.keys().hasOnly(['firstName','namePrefix','lastName','role','status']) &&
         validProfileName(request.resource.data) && request.resource.data.role == 'beheerder' &&
-        request.resource.data.status == 'active' &&
-        request.resource.data.email is string && request.resource.data.email.size() <= 254 &&
-        request.resource.data.email.matches('[^ @]+@[^ @]+');
+        request.resource.data.status == 'active';
       allow delete: if role('beheerder') && resource.data.role == 'trainer' &&
         resource.data.status == 'pending' && existsAfter(/databases/$(database)/documents/rejectedTrainers/$(uid));
       allow delete: if role('beheerder') && request.auth.uid != uid &&
