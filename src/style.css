@@ -84,10 +84,13 @@ dialog form, .settings { display: grid; gap: 14px; }
 .wide { grid-column: 1 / -1; }
 
 dialog::backdrop { background: #15292d80; }
-.header-actions, .occurrence-actions { display: flex; gap: 8px; align-items: center; }
+.header-actions { display: flex; gap: 8px; align-items: center; }
 .notification-bell { display: grid; place-items: center; width: 44px; padding: 0; color: var(--accent); }
 .occurrence-list { display: grid; gap: 12px; }
-.occurrence-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.occurrence-row { display: grid; gap: 8px; }
+.occurrence-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.occurrence-actions .declaration-approved span { color: #195738; }
+.occurrence-actions .declaration-rejected span { color: #8a2323; }
 .occurrence-row + .occurrence-row { border-top: 1px solid var(--line); padding-top: 12px; }
 .header-menu { position: relative; }
 .header-menu summary { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 8px 13px; border: 1px solid var(--line); border-radius: 7px; color: var(--accent); font-weight: 650; cursor: pointer; }

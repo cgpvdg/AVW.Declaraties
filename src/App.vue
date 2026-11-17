@@ -730,15 +730,20 @@ function resetPassword() {
         <article v-for="item in pendingOccurrences" :key="item.id" class="occurrence-row">
           <div>
             <h2>{{ item.name }}</h2>
-            <p><time :datetime="item.date">{{ dateLabel.format(new Date(item.date)) }}</time> {{ item.date.slice(0, 4) }}</p>
-            <p class="muted">{{ fields.map(([key, label, unit]) => label + ' ' + (unit === '€' ? euro.format(item.amounts[key]) : formatDecimal(item.amounts[key]) + ' ' + unit)).join(' · ') }}</p>
+            <p class="entry-date"><time :datetime="item.date">{{ dateLabel.format(new Date(item.date)) }} {{ item.date.slice(0, 4) }}</time></p>
+            <div v-if="fields.some(([key]) => item.amounts[key] > 0)" class="metrics">
+              <span v-for="[key, label, unit] in fields.filter(([key]) => item.amounts[key] > 0)" :key="key"
+                :class="{ 'hour-type': unit === 'uur' }" :data-type="key">
+                {{ label }} · {{ unit === '€' ? euro.format(item.amounts[key]) : item.amounts[key].toLocaleString('nl-NL') + ' ' + unit }}
+              </span>
+            </div>
             <p v-if="!item.editable" class="muted">Deze maanddeclaratie kan niet worden gewijzigd.</p>
           </div>
           <div class="occurrence-actions">
-            <button type="button" class="secondary declaration-approved" :aria-label="'Accorderen: ' + item.name + ', ' + item.date"
-              :disabled="busy || !item.editable || occurrencesLoading || occurrenceLoadError" @click="reviewOccurrence(item, true)">✓</button>
-            <button type="button" class="secondary declaration-rejected" :aria-label="'Niet accorderen: ' + item.name + ', ' + item.date"
-              :disabled="busy || occurrencesLoading || occurrenceLoadError" @click="reviewOccurrence(item, false)">✕</button>
+            <button type="button" class="secondary declaration-approved" :aria-label="'Goedkeuren: ' + item.name + ', ' + item.date"
+              :disabled="busy || !item.editable || occurrencesLoading || occurrenceLoadError" @click="reviewOccurrence(item, true)"><span aria-hidden="true">✓</span> Goedkeuren</button>
+            <button type="button" class="secondary declaration-rejected" :aria-label="'Afkeuren: ' + item.name + ', ' + item.date"
+              :disabled="busy || occurrencesLoading || occurrenceLoadError" @click="reviewOccurrence(item, false)"><span aria-hidden="true">✕</span> Afkeuren</button>
           </div>
         </article>
       </section>
