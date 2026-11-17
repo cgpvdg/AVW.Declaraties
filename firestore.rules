@@ -85,6 +85,19 @@ service cloud.firestore {
       allow read: if trainer(uid);
       allow create, update: if trainer(uid) && validRecurringDeclaration(request.resource.data);
     }
+    match /profiles/{uid}/recurringDecisions/{id} {
+      allow read: if trainer(uid);
+      allow create: if trainer(uid) && validRecurringDecision(uid, id, request.resource.data);
+    }
+    function validRecurringDecision(uid, id, data) {
+      let entry = /databases/$(database)/documents/profiles/$(uid)/months/$(data.period)/entries/$(data.day);
+      return data.keys().hasOnly(['ruleId','period','day','approved']) &&
+        data.ruleId is string && data.ruleId.matches('[A-Za-z0-9]{20}') &&
+        validRecurringDate(data.period + '-' + data.day) &&
+        id == data.ruleId + '_' + data.period + '-' + data.day &&
+        exists(/databases/$(database)/documents/profiles/$(uid)/recurringDeclarations/$(data.ruleId)) &&
+        data.approved is bool && !exists(entry) && existsAfter(entry) == data.approved;
+    }
     function validRecurringDeclaration(data) {
       return data.keys().hasOnly(['name','startDate','endDate','repeat','interval','unit','days',
         'prep','training','guidance','kilometers','expenses']) &&

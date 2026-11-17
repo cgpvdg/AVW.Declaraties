@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { createUserWithEmailAndPassword, EmailAuthProvider, onAuthStateChanged, reauthenticateWithCredential, sendPasswordResetEmail, signInWithEmailAndPassword, signOut, updatePassword } from 'firebase/auth'
 import { collection, deleteField, doc, getDoc, getDocs, runTransaction, setDoc, deleteDoc, updateDoc } from 'firebase/firestore/lite'
 import { auth, db } from './firebase'
@@ -11,6 +11,7 @@ import DeclarationTotals from './DeclarationTotals.vue'
 import EditIcon from './EditIcon.vue'
 import ProfileNameFields from './ProfileNameFields.vue'
 import RecurringDeclarations from './RecurringDeclarations.vue'
+import { isOccurrence, occurrenceDates } from './recurringOccurrences'
 import { fullProfileName, legacyNameMigration, profileNameParts } from './profileName'
 
 const registering = ref(false)
@@ -44,6 +45,7 @@ const pageTitle = computed(() => ({
   trainers: 'Trainers',
   rates: 'Vergoedingen',
   recurring: 'Terugkerende declaraties',
+  notifications: 'Te accorderen declaraties',
   declarations: isAdmin.value ? 'Declaraties' : 'Mijn declaraties',
 })[panel.value])
 const menu = ref(null)
@@ -332,6 +334,106 @@ if (auth) onAuthStateChanged(auth, async (user) => {
 })
 
 const monthRef = (owner, period) => doc(db, 'profiles', owner, 'months', period)
+const pendingOccurrences = ref([])
+const occurrenceLoadError = ref(false)
+const occurrencesLoading = ref(false)
+const canReviewOccurrences = computed(() => !!account.value && !!profile.value && !isAdmin.value && canTrain(profile.value))
+let occurrenceRead = 0
+
+async function loadOccurrences() {
+  const read = ++occurrenceRead
+  occurrenceLoadError.value = false
+  if (!canReviewOccurrences.value) {
+    pendingOccurrences.value = []
+    occurrencesLoading.value = false
+    return
+  }
+  occurrencesLoading.value = true
+  const owner = account.value.uid
+  const through = today()
+  try {
+    const [rules, decisions] = await Promise.all([
+      getDocs(collection(db, 'profiles', owner, 'recurringDeclarations')),
+      getDocs(collection(db, 'profiles', owner, 'recurringDecisions')),
+    ])
+    const handled = new Set(decisions.docs.map(item => item.id))
+    const occurrences = rules.docs.flatMap(item => {
+      const rule = item.data()
+      if (!fields.every(([key]) => Number.isFinite(rule[key]))) return []
+      const amounts = Object.fromEntries(fields.map(([key]) => [key, rule[key]]))
+      return occurrenceDates(rule, through).map(date => ({
+        id: item.id + '_' + date, ruleId: item.id, date, name: rule.name, amounts,
+      }))
+    }).filter(item => !handled.has(item.id))
+    const periods = [...new Set(occurrences.map(item => item.date.slice(0, 7)))]
+    const months = new Map(await Promise.all(periods.map(async period => {
+      const target = monthRef(owner, period)
+      const [header, entries] = await Promise.all([getDoc(target), getDocs(collection(target, 'entries'))])
+      return [period, {
+        editable: ['concept', 'rejected'].includes(header.data()?.status ?? 'concept'),
+        days: new Set(entries.docs.map(item => item.id)),
+      }]
+    })))
+    if (read !== occurrenceRead) return
+    pendingOccurrences.value = occurrences.flatMap(item => {
+      const month = months.get(item.date.slice(0, 7))
+      return month.days.has(item.date.slice(-2)) ? [] : [{ ...item, editable: month.editable }]
+    }).sort((a, b) => a.date.localeCompare(b.date) || a.name.localeCompare(b.name, 'nl'))
+  } catch (failure) {
+    if (read === occurrenceRead) occurrenceLoadError.value = true
+    console.error(failure)
+  } finally {
+    if (read === occurrenceRead) occurrencesLoading.value = false
+  }
+}
+
+watch([canReviewOccurrences, account, panel], ([, user], [, previousUser]) => {
+  if (user !== previousUser) pendingOccurrences.value = []
+  loadOccurrences()
+})
+onMounted(() => window.addEventListener('focus', loadOccurrences))
+onUnmounted(() => window.removeEventListener('focus', loadOccurrences))
+
+async function initializeDeclarationMonth(tx, target, trainer) {
+  const currentRates = await tx.get(rateRef())
+  if (!currentRates.exists()) throw { userMessage: 'De beheerder moet eerst de vergoedingenstaffel opslaan.' }
+  tx.set(target, { name: fullProfileName(trainer), level: trainer.level, rates: currentRates.data() })
+}
+
+function reviewOccurrence(item, approved) {
+  const owner = account.value.uid
+  const trainer = profile.value
+  const target = monthRef(owner, item.date.slice(0, 7))
+  const entry = doc(target, 'entries', item.date.slice(-2))
+  const decision = doc(db, 'profiles', owner, 'recurringDecisions', item.id)
+  return action(async () => {
+    await runTransaction(db, async tx => {
+      const previous = await tx.get(decision)
+      if (previous.exists()) return
+      const existing = await tx.get(entry)
+      if (existing.exists()) return
+      const schedule = await tx.get(doc(db, 'profiles', owner, 'recurringDeclarations', item.ruleId))
+      const current = schedule.data()
+      if (!current || item.date > today() || !isOccurrence(current, item.date) ||
+        fields.some(([key]) => current[key] !== item.amounts[key])) {
+        throw { userMessage: 'Deze terugkerende declaratie is gewijzigd. Open de meldingen opnieuw.' }
+      }
+      if (approved) {
+        const header = await tx.get(target)
+        if (!['concept', 'rejected'].includes(header.data()?.status ?? 'concept')) {
+          throw { userMessage: 'Deze maanddeclaratie kan niet worden gewijzigd.' }
+        }
+        if (!header.exists()) await initializeDeclarationMonth(tx, target, trainer)
+        tx.set(entry, { ...item.amounts, date: item.date, notes: '' })
+      }
+      tx.set(decision, {
+        ruleId: item.ruleId, period: item.date.slice(0, 7), day: item.date.slice(-2), approved,
+      })
+    })
+    pendingOccurrences.value = pendingOccurrences.value.filter(row => row.id !== item.id && (!approved || row.date !== item.date))
+    await loadOccurrences()
+  }, 'De keuze kon niet worden opgeslagen.')
+}
 let readVersion = 0
 const overviewRows = ref([])
 const overviewTotal = computed(() => overviewRows.value.reduce((sum, row) => sum + row.total, 0))
@@ -511,16 +613,13 @@ function saveEntry() {
       if (existing.exists() && original !== row.date) {
         throw { userMessage: 'Er bestaat al een regel voor deze datum. Open die regel om hem aan te passen.' }
       }
-      if (!header.exists()) {
-        const currentRates = await tx.get(rateRef())
-        if (!currentRates.exists()) throw { userMessage: 'De beheerder moet eerst de vergoedingenstaffel opslaan.' }
-        tx.set(target, { name: fullProfileName(profile.value), level: profile.value.level, rates: currentRates.data() })
-      }
+      if (!header.exists()) await initializeDeclarationMonth(tx, target, profile.value)
       tx.set(dest, row)
       if (source && original !== row.date) tx.delete(source)
     })
     await loadMonth()
     notice.value = 'Regel opgeslagen.'
+    await loadOccurrences()
   }, 'De regel kon niet worden opgeslagen.')
 }
 function removeEntry() {
@@ -530,6 +629,7 @@ function removeEntry() {
     await deleteDoc(target)
     await loadMonth()
     notice.value = 'Regel verwijderd.'
+    await loadOccurrences()
   }, 'De regel kon niet worden verwijderd.')
 }
 function saveRates() {
@@ -564,6 +664,14 @@ function resetPassword() {
   <header class="topbar">
     <div class="top-inner">
       <img :src="logo" alt="AVW Atletiekvereniging Wieringermeer e.o.">
+      <div class="header-actions">
+      <button v-if="canReviewOccurrences && pendingOccurrences.length" type="button" class="secondary notification-bell"
+        :aria-current="panel === 'notifications' ? 'page' : undefined"
+        :aria-label="'Te accorderen declaraties (' + pendingOccurrences.length + ')'" :disabled="busy" @click="navigate('notifications')">
+        <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/>
+        </svg>
+      </button>
       <details v-if="account" ref="menu" class="header-menu" @keydown.esc.stop="menu.open = false; menu.querySelector('summary').focus()">
         <summary aria-label="Navigatiemenu"><span aria-hidden="true">☰</span></summary>
         <div class="menu-backdrop" aria-hidden="true" @click="menu.open = false"></div>
@@ -587,6 +695,7 @@ function resetPassword() {
           <button class="menu-logout" :disabled="busy" @click="action(() => signOut(auth), 'Uitloggen is mislukt.')">Uitloggen</button>
         </nav>
       </details>
+      </div>
     </div>
   </header>
   <main>
@@ -611,7 +720,29 @@ function resetPassword() {
     </section>
     <template v-else-if="profile">
       <h1 class="page-heading">{{ pageTitle }}</h1>
-      <RecurringDeclarations v-if="panel === 'recurring' && !isAdmin && canTrain(profile)" :key="account.uid" :owner="account.uid" />
+      <section v-if="panel === 'notifications' && canReviewOccurrences" class="card occurrence-list">
+        <p v-if="occurrencesLoading" role="status">Meldingen laden…</p>
+        <template v-else-if="occurrenceLoadError">
+          <p role="alert">De meldingen konden niet worden geladen.</p>
+          <button type="button" class="secondary" @click="loadOccurrences">Opnieuw proberen</button>
+        </template>
+        <p v-else-if="!pendingOccurrences.length" class="muted">Er zijn geen declaraties om te accorderen.</p>
+        <article v-for="item in pendingOccurrences" :key="item.id" class="occurrence-row">
+          <div>
+            <h2>{{ item.name }}</h2>
+            <p><time :datetime="item.date">{{ dateLabel.format(new Date(item.date)) }}</time> {{ item.date.slice(0, 4) }}</p>
+            <p class="muted">{{ fields.map(([key, label, unit]) => label + ' ' + (unit === '€' ? euro.format(item.amounts[key]) : formatDecimal(item.amounts[key]) + ' ' + unit)).join(' · ') }}</p>
+            <p v-if="!item.editable" class="muted">Deze maanddeclaratie kan niet worden gewijzigd.</p>
+          </div>
+          <div class="occurrence-actions">
+            <button type="button" class="secondary declaration-approved" :aria-label="'Accorderen: ' + item.name + ', ' + item.date"
+              :disabled="busy || !item.editable || occurrencesLoading || occurrenceLoadError" @click="reviewOccurrence(item, true)">✓</button>
+            <button type="button" class="secondary declaration-rejected" :aria-label="'Niet accorderen: ' + item.name + ', ' + item.date"
+              :disabled="busy || occurrencesLoading || occurrenceLoadError" @click="reviewOccurrence(item, false)">✕</button>
+          </div>
+        </article>
+      </section>
+      <RecurringDeclarations v-else-if="panel === 'recurring' && !isAdmin && canTrain(profile)" :key="account.uid" :owner="account.uid" />
       <form v-else-if="panel === 'profile'" class="card settings" @submit.prevent="saveProfile">
         <ProfileNameFields v-model="profileDraft.name" :disabled="busy" />
         <label v-if="hasTrainerRole(profile)">Niveau<select v-model="profileDraft.level" :disabled="busy" required>
