@@ -58,7 +58,7 @@ const notifications = computed(() => [
   ...administratorNotifications.value,
   ...(!isAdmin.value && canReviewOccurrences.value && pendingOccurrences.value.length ? [{
     id: 'recurring', destination: 'notifications', icon: 'recurring',
-    label: pendingOccurrences.value.length + ' declaraties accorderen',
+    label: pendingOccurrences.value.length + (pendingOccurrences.value.length === 1 ? ' declaratie accorderen' : ' declaraties accorderen'),
   }] : []),
   ...monthNotifications.value,
 ])
