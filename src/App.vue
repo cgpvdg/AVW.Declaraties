@@ -758,13 +758,15 @@ function resetPassword() {
               <button :aria-current="panel === 'overview' ? 'page' : undefined" :disabled="busy" @click="navigate('overview')"><NavigationIcon name="overview" />Maandoverzicht</button>
               <button :aria-current="panel === 'annualAdmin' ? 'page' : undefined" :disabled="busy" @click="navigate('annualAdmin')"><NavigationIcon name="annual" />Jaaroverzicht</button>
               <button :aria-current="panel === 'matrix' ? 'page' : undefined" :disabled="busy" @click="navigate('matrix')"><NavigationIcon name="matrix" />Matrix</button>
-              <button :aria-current="panel === 'trainers' ? 'page' : undefined" :disabled="busy" @click="navigate('trainers')"><NavigationIcon name="trainers" />Trainers</button>
-              <button :aria-current="panel === 'administrators' ? 'page' : undefined" :disabled="busy" @click="navigate('administrators')"><NavigationIcon name="administrators" />Beheerders</button>
-              <button :aria-current="panel === 'rates' ? 'page' : undefined" :disabled="busy" @click="navigate('rates')"><NavigationIcon name="rates" />Vergoedingen</button>
             </template>
             <button v-if="profile.role === 'beheerder' && canTrain(profile)" :disabled="busy" @click="switchMode(isAdmin ? 'trainer' : 'beheerder')"><NavigationIcon name="switch" />Verder als {{ isAdmin ? 'trainer' : 'beheerder' }}</button>
           </template>
           <div class="menu-bottom">
+            <template v-if="profile && isAdmin">
+              <button :aria-current="panel === 'trainers' ? 'page' : undefined" :disabled="busy" @click="navigate('trainers')"><NavigationIcon name="trainers" />Trainers</button>
+              <button :aria-current="panel === 'administrators' ? 'page' : undefined" :disabled="busy" @click="navigate('administrators')"><NavigationIcon name="administrators" />Beheerders</button>
+              <button :aria-current="panel === 'rates' ? 'page' : undefined" :disabled="busy" @click="navigate('rates')"><NavigationIcon name="rates" />Vergoedingen</button>
+            </template>
             <button v-if="profile && !isAdmin && canTrain(profile)" :aria-current="panel === 'recurring' ? 'page' : undefined" :disabled="busy" @click="navigate('recurring')"><NavigationIcon name="recurring" />Terugkerende declaraties</button>
             <hr class="menu-divider">
             <button v-if="profile" :aria-current="panel === 'profile' ? 'page' : undefined" :disabled="busy" @click="navigate('profile')"><NavigationIcon name="profile" />Profiel</button>
