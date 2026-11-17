@@ -5,9 +5,12 @@ import { collection, deleteField, doc, getDoc, getDocs, runTransaction, setDoc, 
 import { auth, db } from './firebase'
 import { dateLabel, euro, fields, initialRates, monthLabel, monthName, summarize, today } from './model'
 import logo from './logo.png'
+import DeclarationFields from './DeclarationFields.vue'
+import { finishDecimal, formatDecimal, maskDecimal, parseDecimal } from './decimal'
 import DeclarationTotals from './DeclarationTotals.vue'
 import EditIcon from './EditIcon.vue'
 import ProfileNameFields from './ProfileNameFields.vue'
+import RecurringDeclarations from './RecurringDeclarations.vue'
 import { fullProfileName, legacyNameMigration, profileNameParts } from './profileName'
 
 const registering = ref(false)
@@ -40,6 +43,7 @@ const pageTitle = computed(() => ({
   matrix: 'Matrix',
   trainers: 'Trainers',
   rates: 'Vergoedingen',
+  recurring: 'Terugkerende declaraties',
   declarations: isAdmin.value ? 'Declaraties' : 'Mijn declaraties',
 })[panel.value])
 const menu = ref(null)
@@ -437,25 +441,8 @@ watch([panel, month, isAdmin, declarationTrainers], async ([destination, period,
   }
 })
 
-function formatDecimal(value) {
-  return value.toFixed(2).replace('.', ',')
-}
-function parseDecimal(value) {
-  return Number(value.replace(',', '.'))
-}
 function formatRates(rates) {
   return Object.fromEntries(Object.entries(initialRates).map(([key, fallback]) => [key, formatDecimal(rates[key] ?? fallback)]))
-}
-function maskDecimal(event, draft, key) {
-  const input = event.target
-  const value = input.value.replace('.', ',')
-  if (/^\d{0,6}(,\d{0,2})?$/.test(value)) draft[key] = value
-  input.value = draft[key]
-}
-function finishDecimal(draft, key) {
-  const value = draft[key]
-  if (value && value !== ',') draft[key] = formatDecimal(parseDecimal(value))
-  else draft[key] = ''
 }
 function openEntry(row) {
   if (!canEditEntries.value) return
@@ -587,6 +574,7 @@ function resetPassword() {
             <button class="menu-profile" :aria-current="panel === 'profile' ? 'page' : undefined" :disabled="busy" @click="navigate('profile')">Profiel</button>
             <button :aria-current="panel === 'declarations' ? 'page' : undefined" :disabled="busy" @click="navigate('declarations')">Declaraties</button>
             <button v-if="!isAdmin" :aria-current="panel === 'annual' ? 'page' : undefined" :disabled="busy" @click="navigate('annual')">Jaaroverzicht</button>
+            <button v-if="!isAdmin && canTrain(profile)" :aria-current="panel === 'recurring' ? 'page' : undefined" :disabled="busy" @click="navigate('recurring')">Terugkerende declaraties</button>
             <template v-if="isAdmin">
               <button :aria-current="panel === 'overview' ? 'page' : undefined" :disabled="busy" @click="navigate('overview')">Maandoverzicht</button>
               <button :aria-current="panel === 'annualAdmin' ? 'page' : undefined" :disabled="busy" @click="navigate('annualAdmin')">Jaaroverzicht</button>
@@ -623,7 +611,8 @@ function resetPassword() {
     </section>
     <template v-else-if="profile">
       <h1 class="page-heading">{{ pageTitle }}</h1>
-      <form v-if="panel === 'profile'" class="card settings" @submit.prevent="saveProfile">
+      <RecurringDeclarations v-if="panel === 'recurring' && !isAdmin && canTrain(profile)" :key="account.uid" :owner="account.uid" />
+      <form v-else-if="panel === 'profile'" class="card settings" @submit.prevent="saveProfile">
         <ProfileNameFields v-model="profileDraft.name" :disabled="busy" />
         <label v-if="hasTrainerRole(profile)">Niveau<select v-model="profileDraft.level" :disabled="busy" required>
           <option :value="null" disabled>Kies een niveau</option>
@@ -857,13 +846,7 @@ function resetPassword() {
           <div v-if="error" class="banner error" role="alert">{{ error }}</div>
           <label>Datum<input v-model="editing.date" type="date" required :disabled="busy" :min="month + '-01'" :max="lastDate"></label>
           <fieldset class="form-grid" :disabled="busy">
-            <label v-for="[key, label, unit] in fields" :key="key">{{ label }}
-              <span class="currency-field">
-                <span v-if="editing[key] && unit === '€'" class="currency-prefix" aria-hidden="true">€</span>
-                <input :value="editing[key]" :class="{ 'unit-input': editing[key] && unit !== '€' }" type="text" inputmode="decimal" :placeholder="unit === '€' ? '€ 0,00' : '0,00 ' + unit" @input="maskDecimal($event, editing, key)" @blur="finishDecimal(editing, key)">
-                <span v-if="editing[key] && unit !== '€'" class="unit-suffix" aria-hidden="true">{{ unit }}</span>
-              </span>
-            </label>
+            <DeclarationFields :draft="editing" />
             <label class="wide">Opmerkingen<textarea v-model="editing.notes" rows="2" maxlength="1000"></textarea></label>
           </fieldset>
           <div class="form-actions"><button class="primary" :disabled="busy">Opslaan</button><button v-if="editing.original" type="button" class="link danger" :disabled="busy" @click="removeEntry">Verwijderen</button></div>

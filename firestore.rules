@@ -81,6 +81,26 @@ service cloud.firestore {
       allow read: if role('beheerder') || (request.auth != null && trainer(request.auth.uid));
       allow create, update: if role('beheerder') && validRate(request.resource.data);
     }
+    match /profiles/{uid}/recurringDeclarations/{id} {
+      allow read: if trainer(uid);
+      allow create, update: if trainer(uid) && validRecurringDeclaration(request.resource.data);
+    }
+    function validRecurringDeclaration(data) {
+      return data.keys().hasOnly(['name','startDate','endDate','repeat','interval','unit','days',
+        'prep','training','guidance','kilometers','expenses']) &&
+        validNamePart(data.name) &&
+        validRecurringDate(data.startDate) &&
+        (data.endDate == '' || (validRecurringDate(data.endDate) && data.startDate <= data.endDate)) &&
+        validDeclarationAmounts(data) &&
+        data.repeat == true && data.interval is int && data.interval >= 1 && data.interval <= 100 &&
+        data.unit in ['dag','week','maand','jaar'] &&
+        data.days is list && data.days.hasOnly([1,2,3,4,5,6,7]) &&
+        data.days.size() == data.days.toSet().size() &&
+        (data.unit == 'week' ? data.days.size() > 0 : data.days.size() == 0);
+    }
+    function validRecurringDate(value) {
+      return value is string && value.matches('[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])');
+    }
     match /profiles/{uid}/months/{month} {
       allow read: if role('beheerder') || trainer(uid);
       allow create: if trainer(uid) && month.matches('[0-9]{4}-(0[1-9]|1[0-2])') &&
@@ -118,12 +138,13 @@ service cloud.firestore {
     }
     function validEntry(data, month, day) {
       return data.keys().hasOnly(['date','prep','training','guidance','kilometers','expenses','notes']) &&
-        data.date == month + '-' + day &&
-        data.prep is number && data.training is number && data.guidance is number &&
-        data.prep >= 0 && data.training >= 0 && data.guidance >= 0 &&
-        data.prep + data.training + data.guidance <= 24 &&
-        amount(data.kilometers) && amount(data.expenses) &&
+        data.date == month + '-' + day && validDeclarationAmounts(data) &&
         data.notes is string && data.notes.size() <= 1000;
+    }
+    function validDeclarationAmounts(data) {
+      return amount(data.prep) && amount(data.training) && amount(data.guidance) &&
+        data.prep + data.training + data.guidance <= 24 &&
+        amount(data.kilometers) && amount(data.expenses);
     }
   }
 }
