@@ -44,6 +44,7 @@ const pageTitle = computed(() => ({
   annualAdmin: 'Jaaroverzicht',
   matrix: 'Matrix',
   trainers: 'Trainers',
+  trainerEdit: trainerDraft.value?.pending ? 'Trainer verifiëren' : 'Trainer wijzigen',
   administrators: 'Beheerders',
   rates: 'Vergoedingen',
   recurring: 'Terugkerende declaraties',
@@ -51,10 +52,21 @@ const pageTitle = computed(() => ({
   declarations: isAdmin.value ? 'Declaraties' : 'Mijn declaraties',
 })[panel.value])
 const menu = ref(null)
+const notificationMenu = ref(null)
+const administratorNotifications = computed(() => {
+  if (!isAdmin.value) return []
+  const count = trainers.value.filter(trainer => trainer.status === 'pending').length
+  return count ? [{
+    id: 'pending-trainers',
+    destination: 'trainers',
+    label: count === 1 ? '1 nieuwe trainer verifiëren' : count + ' nieuwe trainers verifiëren',
+  }] : []
+})
 const profileDraft = ref({ name: profileNameParts(), level: null })
 const passwordDraft = ref(null)
 
 function navigate(destination) {
+  if (notificationMenu.value) notificationMenu.value.open = false
   menu.value.open = false
   passwordDraft.value = destination === 'password' ? { current: '', next: '', confirmation: '' } : null
   panel.value = destination
@@ -201,6 +213,29 @@ async function refreshProfileLists() {
   setProfileLists(users.docs.map(item => ({ ...item.data(), id: item.id })))
 }
 
+async function refreshAdministratorNotifications() {
+  if (!account.value || !isAdmin.value) return
+  const owner = account.value.uid
+  try {
+    const users = await getDocs(collection(db, 'profiles'))
+    if (account.value?.uid === owner && isAdmin.value) {
+      setProfileLists(users.docs.map(item => ({ ...item.data(), id: item.id })))
+    }
+  } catch (failure) {
+    console.error('Beheerdersmeldingen verversen mislukt.', failure)
+  }
+}
+
+let administratorRefreshTimer
+onMounted(() => {
+  window.addEventListener('focus', refreshAdministratorNotifications)
+  administratorRefreshTimer = window.setInterval(refreshAdministratorNotifications, 60000)
+})
+onUnmounted(() => {
+  window.removeEventListener('focus', refreshAdministratorNotifications)
+  window.clearInterval(administratorRefreshTimer)
+})
+
 async function migrateProfileName(owner, profile) {
   if (!legacyNameMigration(profile)) return profile
   try {
@@ -268,6 +303,17 @@ function rejectTrainer(trainer) {
   }, 'De aanvraag kon niet worden afgekeurd.')
 }
 
+function openTrainer(trainer) {
+  trainerDraft.value = {
+    ...trainer,
+    name: profileNameParts(trainer),
+    level: trainer.level ?? 1,
+    pending: trainer.status === 'pending',
+    status: trainer.status === 'pending' ? 'active' : (trainer.status ?? 'active'),
+  }
+  navigate('trainerEdit')
+}
+
 function saveTrainer() {
   const { id, name, level, status, pending } = trainerDraft.value
   const target = doc(db, 'profiles', id)
@@ -281,6 +327,7 @@ function saveTrainer() {
     await refreshProfileLists()
     if (!uid.value) uid.value = declarationTrainers.value[0]?.id ?? ''
     trainerDraft.value = null
+    navigate('trainers')
     notice.value = 'Trainerprofiel opgeslagen.'
   }, 'Het trainerprofiel kon niet worden opgeslagen.')
 }
@@ -740,6 +787,20 @@ function resetPassword() {
     <div class="top-inner">
       <img :src="logo" alt="AVW Atletiekvereniging Wieringermeer e.o.">
       <div class="header-actions">
+      <details v-if="isAdmin && administratorNotifications.length" ref="notificationMenu" class="notification-menu"
+        @keydown.esc.stop="notificationMenu.open = false; notificationMenu.querySelector('summary').focus()"
+        @toggle="notificationMenu?.open && (menu.open = false)">
+        <summary class="secondary notification-bell" aria-label="Beheerdersmeldingen">
+          <NavigationIcon name="notifications" />
+        </summary>
+        <div class="notification-backdrop" aria-hidden="true" @click="notificationMenu.open = false"></div>
+        <nav class="notification-items" aria-label="Meldingen">
+          <button v-for="notification in administratorNotifications" :key="notification.id" type="button"
+            class="secondary" :disabled="busy" @click="navigate(notification.destination)">
+            {{ notification.label }}
+          </button>
+        </nav>
+      </details>
       <button v-if="canReviewOccurrences && pendingOccurrences.length" type="button" class="secondary notification-bell"
         :aria-current="panel === 'notifications' ? 'page' : undefined"
         :aria-label="'Te accorderen declaraties (' + pendingOccurrences.length + ')'" :disabled="busy" @click="navigate('notifications')">
@@ -799,7 +860,7 @@ function resetPassword() {
     </section>
     <template v-else-if="profile">
       <h1 class="page-heading page-heading-with-icon">
-        <NavigationIcon :name="panel === 'annualAdmin' ? 'annual' : panel === 'password' ? 'profile' : panel" />
+        <NavigationIcon :name="panel === 'trainerEdit' ? 'trainers' : panel === 'annualAdmin' ? 'annual' : panel === 'password' ? 'profile' : panel" />
         {{ pageTitle }}
       </h1>
       <section v-if="panel === 'notifications' && canReviewOccurrences" class="card occurrence-list">
@@ -848,8 +909,8 @@ function resetPassword() {
           <button type="button" class="secondary" :disabled="busy" @click="navigate('profile')">Terug naar profiel</button>
         </div>
       </form>
-      <section v-else-if="panel === 'trainers'" class="card settings">
-        <form v-if="trainerDraft" class="settings" @submit.prevent="saveTrainer">
+      <section v-else-if="panel === 'trainerEdit' && trainerDraft && isAdmin" class="card settings">
+        <form class="settings" @submit.prevent="saveTrainer">
           <ProfileNameFields v-model="trainerDraft.name" :disabled="busy" />
           <label>Niveau<select v-model.number="trainerDraft.level" required>
             <option v-for="level in 4" :key="level" :value="level">{{ level }}</option>
@@ -859,13 +920,15 @@ function resetPassword() {
           </select></label>
           <div class="form-actions">
             <button class="primary" :disabled="busy">{{ trainerDraft.pending ? 'Verifiëren' : 'Opslaan' }}</button>
-            <button type="button" class="secondary" :disabled="busy" @click="trainerDraft = null">Annuleren</button>
+            <button type="button" class="secondary" :disabled="busy" @click="trainerDraft = null; navigate('trainers')">Terug naar Trainers</button>
           </div>
         </form>
+      </section>
+      <section v-else-if="panel === 'trainers'" class="card settings">
         <ul class="entry-list trainer-list">
           <li v-for="trainer in trainers" :key="trainer.id">
             <div><strong>{{ fullProfileName(trainer) }}</strong><p class="muted">{{ statusLabel(trainer) }} · Niveau {{ trainer.level ?? 'instellen' }}</p></div>
-            <button class="secondary" :disabled="busy" :aria-label="trainer.status === 'pending' ? undefined : 'Trainer bewerken'" @click="trainerDraft = { ...trainer, name: profileNameParts(trainer), level: trainer.level ?? 1, pending: trainer.status === 'pending', status: trainer.status === 'pending' ? 'active' : (trainer.status ?? 'active') }">
+            <button class="secondary" :disabled="busy" :aria-label="trainer.status === 'pending' ? undefined : 'Trainer bewerken'" @click="openTrainer(trainer)">
               <template v-if="trainer.status === 'pending'">Verifiëren</template>
               <EditIcon v-else />
             </button>

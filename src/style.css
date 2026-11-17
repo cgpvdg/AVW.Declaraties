@@ -88,6 +88,13 @@ dialog form, .settings { display: grid; gap: 14px; }
 dialog::backdrop { background: #15292d80; }
 .header-actions { display: flex; gap: 8px; align-items: center; }
 .notification-bell { display: grid; place-items: center; width: 44px; padding: 0; color: var(--accent); }
+.notification-menu { position: relative; }
+.notification-menu summary { min-height: 44px; border: 1px solid var(--line); border-radius: 7px; cursor: pointer; list-style: none; }
+.notification-menu summary::-webkit-details-marker { display: none; }
+.notification-menu[open] summary { position: relative; z-index: 4; background: white; }
+.notification-backdrop { position: fixed; inset: 0; z-index: 3; }
+.notification-items { position: absolute; top: calc(100% + 8px); right: 0; z-index: 4; width: min(300px, calc(100vw - 90px)); display: grid; gap: 4px; padding: 8px; background: white; border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 4px 16px #15292d22; }
+.notification-items button { text-align: left; }
 .occurrence-list { display: grid; gap: 12px; }
 .occurrence-row { display: grid; gap: 8px; }
 .occurrence-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
