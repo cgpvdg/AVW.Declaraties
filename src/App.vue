@@ -53,6 +53,52 @@ const pageTitle = computed(() => ({
 })[panel.value])
 const menu = ref(null)
 const notificationMenu = ref(null)
+const monthNotifications = ref([])
+const notifications = computed(() => [
+  ...administratorNotifications.value,
+  ...(!isAdmin.value && canReviewOccurrences.value && pendingOccurrences.value.length ? [{
+    id: 'recurring', destination: 'notifications',
+    label: pendingOccurrences.value.length + ' declaraties accorderen',
+  }] : []),
+  ...monthNotifications.value,
+])
+function openNotification(notification) {
+  if (notification.period) {
+    month.value = notification.period
+    uid.value = notification.owner
+  }
+  navigate(notification.destination)
+}
+
+let notificationVersion = 0
+async function refreshMonthNotifications() {
+  const version = ++notificationVersion
+  if (!account.value || !profile.value) {
+    monthNotifications.value = []
+    return
+  }
+  const admin = isAdmin.value
+  const owners = admin ? declarationTrainers.value : [{ ...profile.value, id: account.value.uid }]
+  try {
+    const results = await Promise.all(owners.map(async owner => {
+      const months = await getDocs(collection(db, 'profiles', owner.id, 'months'))
+      const items = await Promise.all(months.docs.map(async item => {
+        const status = item.data().status ?? 'concept'
+        if (admin ? status !== 'submitted' : item.id >= today().slice(0, 7) || !['concept', 'rejected'].includes(status)) return null
+        if (!admin && (await getDocs(collection(item.ref, 'entries'))).empty) return null
+        const caption = monthLabel.format(new Date(item.id + '-01T00:00:00Z'))
+        return {
+          id: owner.id + '-' + item.id, owner: owner.id, period: item.id, destination: 'declarations',
+          label: admin ? fullProfileName(owner) + ' · ' + caption + ' beoordelen' : caption + ' indienen',
+        }
+      }))
+      return items.filter(Boolean)
+    }))
+    if (version === notificationVersion) monthNotifications.value = results.flat().sort((a, b) => a.period.localeCompare(b.period))
+  } catch (failure) {
+    console.error('Maandmeldingen laden mislukt.', failure)
+  }
+}
 const administratorNotifications = computed(() => {
   if (!isAdmin.value) return []
   const count = trainers.value.filter(trainer => trainer.status === 'pending').length
@@ -230,11 +276,17 @@ async function refreshAdministratorNotifications() {
 let administratorRefreshTimer
 onMounted(() => {
   window.addEventListener('focus', refreshAdministratorNotifications)
-  administratorRefreshTimer = window.setInterval(refreshAdministratorNotifications, 60000)
+  administratorRefreshTimer = window.setInterval(() => {
+    refreshAdministratorNotifications()
+    refreshMonthNotifications()
+    loadOccurrences()
+  }, 60000)
+  window.addEventListener('focus', refreshMonthNotifications)
 })
 onUnmounted(() => {
   window.removeEventListener('focus', refreshAdministratorNotifications)
   window.clearInterval(administratorRefreshTimer)
+  window.removeEventListener('focus', refreshMonthNotifications)
 })
 
 async function migrateProfileName(owner, profile) {
@@ -475,6 +527,10 @@ if (auth) onAuthStateChanged(auth, async (user) => {
 })
 
 const monthRef = (owner, period) => doc(db, 'profiles', owner, 'months', period)
+watch([account, profile, isAdmin, panel, trainers], () => {
+  monthNotifications.value = []
+  refreshMonthNotifications()
+})
 const pendingOccurrences = ref([])
 const occurrenceLoadError = ref(false)
 const occurrencesLoading = ref(false)
@@ -722,6 +778,7 @@ function changeDeclarationStatus(status) {
       throw failure
     }
     await loadMonth()
+    await refreshMonthNotifications()
     notice.value = 'Declaratiestatus bijgewerkt.'
   }, 'De declaratiestatus kon niet worden bijgewerkt.')
 }
@@ -759,6 +816,7 @@ function saveEntry() {
       if (source && original !== row.date) tx.delete(source)
     })
     await loadMonth()
+    await refreshMonthNotifications()
     notice.value = 'Regel opgeslagen.'
     await loadOccurrences()
   }, 'De regel kon niet worden opgeslagen.')
@@ -769,6 +827,7 @@ function removeEntry() {
   return action(async () => {
     await deleteDoc(target)
     await loadMonth()
+    await refreshMonthNotifications()
     notice.value = 'Regel verwijderd.'
     await loadOccurrences()
   }, 'De regel kon niet worden verwijderd.')
@@ -806,25 +865,20 @@ function resetPassword() {
     <div class="top-inner">
       <img :src="logo" alt="AVW Atletiekvereniging Wieringermeer e.o.">
       <div class="header-actions">
-      <details v-if="isAdmin && administratorNotifications.length" ref="notificationMenu" class="notification-menu"
+      <details v-if="notifications.length" ref="notificationMenu" class="notification-menu"
         @keydown.esc.stop="notificationMenu.open = false; notificationMenu.querySelector('summary').focus()"
         @toggle="notificationMenu?.open && (menu.open = false)">
-        <summary class="secondary notification-bell" aria-label="Beheerdersmeldingen">
+        <summary class="secondary notification-bell" aria-label="Meldingen">
           <NavigationIcon name="notifications" />
         </summary>
         <div class="notification-backdrop" aria-hidden="true" @click="notificationMenu.open = false"></div>
         <nav class="notification-items" aria-label="Meldingen">
-          <button v-for="notification in administratorNotifications" :key="notification.id" type="button"
-            class="secondary" :disabled="busy" @click="navigate(notification.destination)">
+          <button v-for="notification in notifications" :key="notification.id" type="button"
+            class="secondary" :disabled="busy" @click="openNotification(notification)">
             {{ notification.label }}
           </button>
         </nav>
       </details>
-      <button v-if="canReviewOccurrences && pendingOccurrences.length" type="button" class="secondary notification-bell"
-        :aria-current="panel === 'notifications' ? 'page' : undefined"
-        :aria-label="'Te accorderen declaraties (' + pendingOccurrences.length + ')'" :disabled="busy" @click="navigate('notifications')">
-        <NavigationIcon name="notifications" />
-      </button>
       <details v-if="account" ref="menu" class="header-menu" @keydown.esc.stop="menu.open = false; menu.querySelector('summary').focus()">
         <summary aria-label="Navigatiemenu"><span aria-hidden="true">☰</span></summary>
         <div class="menu-backdrop" aria-hidden="true" @click="menu.open = false"></div>
