@@ -9,6 +9,7 @@ import DeclarationFields from './DeclarationFields.vue'
 import { finishDecimal, formatDecimal, maskDecimal, parseDecimal } from './decimal'
 import DeclarationTotals from './DeclarationTotals.vue'
 import EditIcon from './EditIcon.vue'
+import NavigationIcon from './NavigationIcon.vue'
 import ProfileNameFields from './ProfileNameFields.vue'
 import RecurringDeclarations from './RecurringDeclarations.vue'
 import { isOccurrence, occurrenceDates } from './recurringOccurrences'
@@ -668,9 +669,7 @@ function resetPassword() {
       <button v-if="canReviewOccurrences && pendingOccurrences.length" type="button" class="secondary notification-bell"
         :aria-current="panel === 'notifications' ? 'page' : undefined"
         :aria-label="'Te accorderen declaraties (' + pendingOccurrences.length + ')'" :disabled="busy" @click="navigate('notifications')">
-        <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/>
-        </svg>
+        <NavigationIcon name="notifications" />
       </button>
       <details v-if="account" ref="menu" class="header-menu" @keydown.esc.stop="menu.open = false; menu.querySelector('summary').focus()">
         <summary aria-label="Navigatiemenu"><span aria-hidden="true">☰</span></summary>
@@ -679,20 +678,23 @@ function resetPassword() {
           <img class="menu-logo" :src="logo" alt="AVW Atletiekvereniging Wieringermeer e.o.">
           <template v-if="profile">
             <span class="menu-user">{{ fullProfileName(profile) }} · {{ isAdmin ? 'Beheerder' : 'Trainer' }}{{ hasTrainerRole(profile) && profile.level ? ' · Niveau ' + profile.level : '' }}</span>
-            <button class="menu-profile" :aria-current="panel === 'profile' ? 'page' : undefined" :disabled="busy" @click="navigate('profile')">Profiel</button>
-            <button :aria-current="panel === 'declarations' ? 'page' : undefined" :disabled="busy" @click="navigate('declarations')">Declaraties</button>
-            <button v-if="!isAdmin" :aria-current="panel === 'annual' ? 'page' : undefined" :disabled="busy" @click="navigate('annual')">Jaaroverzicht</button>
-            <button v-if="!isAdmin && canTrain(profile)" :aria-current="panel === 'recurring' ? 'page' : undefined" :disabled="busy" @click="navigate('recurring')">Terugkerende declaraties</button>
+            <button :aria-current="panel === 'declarations' ? 'page' : undefined" :disabled="busy" @click="navigate('declarations')"><NavigationIcon name="declarations" />Declaraties</button>
+            <button v-if="!isAdmin" :aria-current="panel === 'annual' ? 'page' : undefined" :disabled="busy" @click="navigate('annual')"><NavigationIcon name="annual" />Jaaroverzicht</button>
             <template v-if="isAdmin">
-              <button :aria-current="panel === 'overview' ? 'page' : undefined" :disabled="busy" @click="navigate('overview')">Maandoverzicht</button>
-              <button :aria-current="panel === 'annualAdmin' ? 'page' : undefined" :disabled="busy" @click="navigate('annualAdmin')">Jaaroverzicht</button>
-              <button :aria-current="panel === 'matrix' ? 'page' : undefined" :disabled="busy" @click="navigate('matrix')">Matrix</button>
-              <button :aria-current="panel === 'trainers' ? 'page' : undefined" :disabled="busy" @click="navigate('trainers')">Trainers</button>
-              <button :aria-current="panel === 'rates' ? 'page' : undefined" :disabled="busy" @click="navigate('rates')">Vergoedingen</button>
+              <button :aria-current="panel === 'overview' ? 'page' : undefined" :disabled="busy" @click="navigate('overview')"><NavigationIcon name="overview" />Maandoverzicht</button>
+              <button :aria-current="panel === 'annualAdmin' ? 'page' : undefined" :disabled="busy" @click="navigate('annualAdmin')"><NavigationIcon name="annual" />Jaaroverzicht</button>
+              <button :aria-current="panel === 'matrix' ? 'page' : undefined" :disabled="busy" @click="navigate('matrix')"><NavigationIcon name="matrix" />Matrix</button>
+              <button :aria-current="panel === 'trainers' ? 'page' : undefined" :disabled="busy" @click="navigate('trainers')"><NavigationIcon name="trainers" />Trainers</button>
+              <button :aria-current="panel === 'rates' ? 'page' : undefined" :disabled="busy" @click="navigate('rates')"><NavigationIcon name="rates" />Vergoedingen</button>
             </template>
-            <button v-if="profile.role === 'beheerder' && canTrain(profile)" :disabled="busy" @click="switchMode(isAdmin ? 'trainer' : 'beheerder')">Verder als {{ isAdmin ? 'trainer' : 'beheerder' }}</button>
+            <button v-if="profile.role === 'beheerder' && canTrain(profile)" :disabled="busy" @click="switchMode(isAdmin ? 'trainer' : 'beheerder')"><NavigationIcon name="switch" />Verder als {{ isAdmin ? 'trainer' : 'beheerder' }}</button>
           </template>
-          <button class="menu-logout" :disabled="busy" @click="action(() => signOut(auth), 'Uitloggen is mislukt.')">Uitloggen</button>
+          <div class="menu-bottom">
+            <button v-if="profile && !isAdmin && canTrain(profile)" :aria-current="panel === 'recurring' ? 'page' : undefined" :disabled="busy" @click="navigate('recurring')"><NavigationIcon name="recurring" />Terugkerende declaraties</button>
+            <hr class="menu-divider">
+            <button v-if="profile" :aria-current="panel === 'profile' ? 'page' : undefined" :disabled="busy" @click="navigate('profile')"><NavigationIcon name="profile" />Profiel</button>
+            <button class="menu-logout" :disabled="busy" @click="action(() => signOut(auth), 'Uitloggen is mislukt.')"><NavigationIcon name="logout" />Uitloggen</button>
+          </div>
         </nav>
       </details>
       </div>
@@ -719,7 +721,10 @@ function resetPassword() {
       </form>
     </section>
     <template v-else-if="profile">
-      <h1 class="page-heading">{{ pageTitle }}</h1>
+      <h1 class="page-heading page-heading-with-icon">
+        <NavigationIcon :name="panel === 'annualAdmin' ? 'annual' : panel === 'password' ? 'profile' : panel" />
+        {{ pageTitle }}
+      </h1>
       <section v-if="panel === 'notifications' && canReviewOccurrences" class="card occurrence-list">
         <p v-if="occurrencesLoading" role="status">Meldingen laden…</p>
         <template v-else-if="occurrenceLoadError">

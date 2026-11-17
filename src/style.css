@@ -10,6 +10,8 @@ footer { text-align: center; padding: 14px; color: #526166; font-size: .85rem; }
 h1, h2, p { margin: 0; }
 h1 { font-size: clamp(1.375rem, 3vw, 1.625rem); letter-spacing: -.025em; line-height: 1.2; }
 h2 { font-size: 1.15rem; letter-spacing: -.025em; }
+.page-heading-with-icon { display: flex; align-items: center; gap: 10px; }
+.page-heading-with-icon svg { flex: none; width: 1em; height: 1em; }
 .eyebrow { display: block; text-transform: uppercase; font-size: .73rem; font-weight: 800; letter-spacing: .14em; color: var(--accent); margin-bottom: 10px; }
 .card { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
 .login { margin-top: 20px; }
@@ -98,14 +100,16 @@ dialog::backdrop { background: #15292d80; }
 .header-menu summary span { font-size: 1.25rem; }
 .menu-links { position: fixed; z-index: 6; inset: 0 auto 0 0; width: min(288px, calc(100vw - 74px)); display: flex; flex-direction: column; gap: 4px; padding: 22px 12px; background: white; border-right: 1px solid var(--line); box-shadow: 8px 0 24px #15292d22; overflow-y: auto; }
 .menu-user { padding: 9px 12px; color: #526166; font-size: .85rem; overflow-wrap: anywhere; }
-.menu-links button { text-align: left; color: var(--accent); background: white; }
+.menu-links button { display: flex; align-items: center; gap: 10px; text-align: left; color: var(--accent); background: white; }
+.menu-links button svg { flex: none; }
 .menu-links button:hover, .menu-links [aria-current="page"] { background: #e8eff9; }
 
 .header-menu summary { justify-content: center; min-width: 44px; }
 .header-menu[open] summary { position: relative; z-index: 6; background: white; }
 .menu-backdrop { position: fixed; z-index: 5; inset: 0; background: #15292d66; }
-.menu-links .menu-profile { margin-bottom: 10px; border-bottom-color: var(--line); font-weight: 800; }
-.menu-links .menu-logout { margin-top: auto; border-top-color: var(--line); color: #9b2638; }
+.menu-bottom { display: flex; flex-direction: column; gap: 4px; margin-top: auto; }
+.menu-divider { align-self: stretch; margin: 0; border: 0; border-top: 1px solid var(--line); }
+.menu-links .menu-logout { color: #9b2638; }
 
 .page-heading { color: var(--accent); margin: 0 0 12px; }
 @media (max-width: 599px) {
