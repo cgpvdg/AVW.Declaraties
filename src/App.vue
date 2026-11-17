@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { createUserWithEmailAndPassword, EmailAuthProvider, onAuthStateChanged, reauthenticateWithCredential, sendPasswordResetEmail, signInWithEmailAndPassword, signOut, updatePassword } from 'firebase/auth'
-import { collection, deleteField, doc, getDoc, getDocs, runTransaction, setDoc, deleteDoc, updateDoc } from 'firebase/firestore/lite'
+import { collection, deleteField, doc, getDoc, getDocs, runTransaction, serverTimestamp, setDoc, deleteDoc, updateDoc } from 'firebase/firestore/lite'
 import { auth, createManagedAccount, db } from './firebase'
 import { dateLabel, euro, fields, initialRates, monthLabel, monthName, summarize, today } from './model'
 import logo from './logo.png'
@@ -12,6 +12,7 @@ import EditIcon from './EditIcon.vue'
 import NavigationIcon from './NavigationIcon.vue'
 import ProfileNameFields from './ProfileNameFields.vue'
 import RecurringDeclarations from './RecurringDeclarations.vue'
+import TrainerDashboard from './TrainerDashboard.vue'
 import { isOccurrence, occurrenceDates } from './recurringOccurrences'
 import { fullProfileName, legacyNameMigration, profileNameParts } from './profileName'
 
@@ -44,6 +45,7 @@ const pageTitle = computed(() => ({
   annualAdmin: 'Jaaroverzicht',
   matrix: 'Matrix',
   trainers: 'Trainers',
+  dashboard: 'Dashboard',
   trainerEdit: trainerDraft.value?.pending ? 'Trainer verifiëren' : 'Trainer wijzigen',
   administrators: 'Beheerders',
   rates: 'Vergoedingen',
@@ -192,7 +194,7 @@ const statusLabel = current => ({ pending: 'Wacht op verificatie', inactive: 'In
 function switchMode(value) {
   navigate('declarations')
   mode.value = value
-  panel.value = 'declarations'
+  panel.value = value === 'trainer' ? 'dashboard' : 'declarations'
   editing.value = null
   trainerDraft.value = null
   uid.value = value === 'trainer' ? account.value.uid : declarationTrainers.value[0]?.id ?? ''
@@ -531,6 +533,7 @@ if (auth) onAuthStateChanged(auth, async (user) => {
     if (version !== authVersion) return
     if (users) setProfileLists(migrated)
     profile.value = migrated.find(owner => owner.id === user.uid) ?? current
+    if (current.role === 'trainer') panel.value = 'dashboard'
     uid.value = current.role === 'trainer' ? user.uid : declarationTrainers.value[0]?.id ?? ''
   } catch (failure) {
     if (version === authVersion) error.value = 'De profielgegevens konden niet worden geladen.'
@@ -633,7 +636,7 @@ function reviewOccurrence(item, approved) {
           throw { userMessage: 'Deze maanddeclaratie kan niet worden gewijzigd.' }
         }
         if (!header.exists()) await initializeDeclarationMonth(tx, target, trainer)
-        tx.set(entry, { ...item.amounts, date: item.date, notes: '' })
+        tx.set(entry, { ...item.amounts, date: item.date, notes: '', createdAt: serverTimestamp() })
       }
       tx.set(decision, {
         ruleId: item.ruleId, period: item.date.slice(0, 7), day: item.date.slice(-2), approved,
@@ -674,6 +677,20 @@ watch([panel, month, isAdmin], async ([destination, period, admin], _, onCleanup
   }
 })
 
+let addFromDashboard = false
+function openDashboardMonth(period) {
+  month.value = period
+  uid.value = account.value.uid
+  navigate('declarations')
+}
+function addDashboardDeclaration() {
+  addFromDashboard = true
+  openDashboardMonth(today().slice(0, 7))
+}
+function viewDashboardYear(year) {
+  annualYear.value = year
+  navigate('annual')
+}
 async function loadMonth() {
   const version = ++readVersion
   editing.value = null
@@ -689,8 +706,16 @@ async function loadMonth() {
     if (version !== readVersion) return
     sheet.value = header.data() ?? null
     records.value = lines.docs.map(item => item.data()).sort((a, b) => a.date.localeCompare(b.date))
+    if (addFromDashboard) {
+      addFromDashboard = false
+      if (canEditEntries.value) openEntry()
+      else notice.value = 'Deze maand is al ingediend of goedgekeurd.'
+    }
   } catch (failure) {
-    if (version === readVersion) error.value = 'De maand kon niet worden geladen.'
+    if (version === readVersion) {
+      addFromDashboard = false
+      error.value = 'De maand kon niet worden geladen.'
+    }
     console.error(failure)
   } finally { if (version === readVersion) reading.value = false }
 }
@@ -824,7 +849,7 @@ function saveEntry() {
         throw { userMessage: 'Er bestaat al een regel voor deze datum. Open die regel om hem aan te passen.' }
       }
       if (!header.exists()) await initializeDeclarationMonth(tx, target, profile.value)
-      tx.set(dest, row)
+      tx.set(dest, { ...row, createdAt: row.createdAt ?? existing.data()?.createdAt ?? serverTimestamp() })
       if (source && original !== row.date) tx.delete(source)
     })
     await loadMonth()
@@ -898,7 +923,8 @@ function resetPassword() {
 <template>
   <header class="topbar">
     <div class="top-inner">
-      <img :src="logo" alt="AVW Atletiekvereniging Wieringermeer e.o.">
+      <button v-if="profile && !isAdmin" class="dashboard-logo" aria-label="Naar dashboard" @click="navigate('dashboard')"><img :src="logo" alt="AVW Atletiekvereniging Wieringermeer e.o."></button>
+      <img v-else :src="logo" alt="AVW Atletiekvereniging Wieringermeer e.o.">
       <div class="header-actions">
       <details v-if="notifications.length" ref="notificationMenu" class="notification-menu"
         @keydown.esc.stop="notificationMenu.open = false; notificationMenu.querySelector('summary').focus()"
@@ -968,11 +994,13 @@ function resetPassword() {
       </form>
     </section>
     <template v-else-if="profile">
-      <h1 class="page-heading page-heading-with-icon">
+      <h1 v-if="panel !== 'dashboard'" class="page-heading page-heading-with-icon">
         <NavigationIcon :name="panel === 'trainerEdit' ? 'trainers' : panel === 'annualAdmin' ? 'annual' : panel === 'password' ? 'profile' : panel" />
         {{ pageTitle }}
       </h1>
-      <section v-if="panel === 'notifications' && canReviewOccurrences" class="card occurrence-list">
+      <TrainerDashboard v-if="panel === 'dashboard' && !isAdmin" :owner="account.uid" :profile="profile"
+        @open-month="openDashboardMonth" @add="addDashboardDeclaration" @view-all="viewDashboardYear" />
+      <section v-else-if="panel === 'notifications' && canReviewOccurrences" class="card occurrence-list">
         <p v-if="occurrencesLoading" role="status">Meldingen laden…</p>
         <template v-else-if="occurrenceLoadError">
           <p role="alert">De meldingen konden niet worden geladen.</p>

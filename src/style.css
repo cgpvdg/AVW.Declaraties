@@ -5,6 +5,7 @@ body { margin: 0; font-size: .9375rem; line-height: 1.45; }
 .topbar { position: sticky; top: 0; z-index: 2; background: white; border-bottom: 1px solid var(--line); }
 .top-inner { padding: 6px 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 56px; }
 .topbar img { width: 124px; height: auto; }
+.dashboard-logo { display: flex; padding: 0; background: transparent; }
 main { flex: 1; padding: 18px 14px 28px; }
 footer { text-align: center; padding: 14px; color: #526166; font-size: .85rem; }
 h1, h2, p { margin: 0; }

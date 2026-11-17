@@ -165,7 +165,8 @@ service cloud.firestore {
               (previous in ['approved', 'rejected'] && next == 'submitted'))));
     }
     function validEntry(data, month, day) {
-      return data.keys().hasOnly(['date','prep','training','guidance','kilometers','expenses','notes']) &&
+      return data.keys().hasOnly(['date','prep','training','guidance','kilometers','expenses','notes','createdAt']) &&
+        (!data.keys().hasAny(['createdAt']) || data.createdAt is timestamp) &&
         data.date == month + '-' + day && validDeclarationAmounts(data) &&
         data.notes is string && data.notes.size() <= 1000;
     }
