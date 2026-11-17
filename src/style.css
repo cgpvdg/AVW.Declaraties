@@ -88,6 +88,7 @@ dialog form, .settings { display: grid; gap: 14px; }
 dialog::backdrop { background: #15292d80; }
 .header-actions { display: flex; gap: 8px; align-items: center; }
 .notification-bell { display: grid; place-items: center; width: 44px; padding: 0; color: var(--accent); }
+.export-download { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 8px 15px; border: 1px solid var(--line); border-radius: 7px; font-weight: 650; text-decoration: none; }
 .notification-bell svg { transform-origin: 50% 15%; animation: notification-ring 10s ease-in-out infinite; }
 .notification-menu .notification-bell { animation: notification-highlight 10s ease-in-out infinite; }
 @keyframes notification-highlight {

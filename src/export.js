@@ -104,21 +104,11 @@ export async function makeDeclaration(templateBytes, month, header, entries) {
   return zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' })
 }
 
-export async function downloadDeclaration(month, header, entries) {
+export async function prepareDeclarationDownload(month, header, entries) {
   const response = await fetch(template)
   if (!response.ok) throw new Error('Sjabloon niet beschikbaar')
   const bytes = await makeDeclaration(await response.arrayBuffer(), month, header, entries)
   const url = URL.createObjectURL(new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }))
-  const link = document.createElement('a')
-  link.href = url
-  link.download = 'AVW Declaratie ' + month + ' - ' + header.name.replace(/[\\/:*?"<>|]/g, '_') + '.xlsx'
-  link.style.display = 'none'
-  document.body.appendChild(link)
-  try {
-    link.click()
-  } finally {
-    link.remove()
-    // Safari may still be reading the file while its download dialog is open.
-    setTimeout(() => URL.revokeObjectURL(url), 60000)
-  }
+  const name = 'AVW Declaratie ' + month + ' - ' + header.name.replace(/[\\/:*?"<>|]/g, '_') + '.xlsx'
+  return { url, name }
 }

@@ -857,14 +857,32 @@ function saveRates() {
     notice.value = 'Vergoedingen opgeslagen.'
   }, 'De staffel kon niet worden opgeslagen.')
 }
+const preparedExport = ref(null)
+let exportVersion = 0
+function clearPreparedExport() {
+  exportVersion++
+  if (preparedExport.value) URL.revokeObjectURL(preparedExport.value.url)
+  preparedExport.value = null
+}
+watch([month, uid, records, sheet, panel, account], clearPreparedExport)
+onUnmounted(clearPreparedExport)
+
 function exportSheet() {
+  clearPreparedExport()
+  const version = exportVersion
   return action(async () => {
     try {
-      const { downloadDeclaration } = await import('./export')
-      await downloadDeclaration(month.value, sheet.value, records.value)
+      const { prepareDeclarationDownload } = await import('./export')
+      const result = await prepareDeclarationDownload(month.value, sheet.value, records.value)
+      if (version !== exportVersion) {
+        URL.revokeObjectURL(result.url)
+        return
+      }
+      preparedExport.value = result
     } catch (failure) {
       console.error(failure)
-      throw { userMessage: 'De Excel-export is mislukt.' + (failure.message ? ' ' + failure.message : '') }
+      const detail = failure?.message || failure?.name || String(failure)
+      throw { userMessage: 'De Excel-export is mislukt. ' + detail }
     }
   }, 'De Excel-export is mislukt.')
 }
@@ -1196,7 +1214,8 @@ function resetPassword() {
               <button class="secondary" aria-label="Volgende maand" :disabled="busy" @click="changeMonth(1)">›</button>
             </span>
           </label>
-          <button class="secondary" :disabled="!sheet || reading || busy" @click="exportSheet">
+          <a v-if="preparedExport" class="secondary export-download" :href="preparedExport.url" :download="preparedExport.name">Excel downloaden</a>
+          <button v-else class="secondary" :disabled="!sheet || reading || busy" @click="exportSheet">
             <svg class="export-icon" viewBox="0 0 20 20" aria-hidden="true">
               <rect x="2" y="2" width="16" height="16" rx="3" fill="#107c41"/>
               <path d="m6.5 6.5 7 7m0-7-7 7" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/>
