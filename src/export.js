@@ -11,7 +11,9 @@ export async function makeDeclaration(templateBytes, month, header, entries) {
   const parser = new DOMParser()
   const serializer = new XMLSerializer()
   async function updateSheet(path, update) {
-    const xml = parser.parseFromString(await zip.file(path).async('string'), 'application/xml')
+    // JSZip preserves the UTF-8 BOM as a character; strip it before parsing XML.
+    const source = (await zip.file(path).async('string')).replace(/^\uFEFF/, '')
+    const xml = parser.parseFromString(source, 'application/xml')
     if (xml.getElementsByTagName('parsererror').length) {
       throw new Error('Het Excel-sjabloon bevat ongeldige XML (' + path + ').')
     }
