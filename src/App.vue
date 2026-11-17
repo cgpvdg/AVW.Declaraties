@@ -142,7 +142,8 @@ function switchMode(value) {
 }
 
 function setProfileLists(users) {
-  trainers.value = users.filter(hasTrainerRole).sort((a, b) => fullProfileName(a).localeCompare(fullProfileName(b), 'nl'))
+  trainers.value = users.filter(user => hasTrainerRole(user) && user.status !== 'deleted')
+    .sort((a, b) => fullProfileName(a).localeCompare(fullProfileName(b), 'nl'))
   administrators.value = users.filter(user => user.role === 'beheerder' &&
     (user.hidden !== true || user.id === account.value?.uid))
     .sort((a, b) => fullProfileName(a).localeCompare(fullProfileName(b), 'nl'))
@@ -330,6 +331,24 @@ function saveTrainer() {
     navigate('trainers')
     notice.value = 'Trainerprofiel opgeslagen.'
   }, 'Het trainerprofiel kon niet worden opgeslagen.')
+}
+
+function removeTrainer() {
+  const trainer = trainerDraft.value
+  if (!window.confirm('Trainer ' + fullProfileName(trainer.name) + ' verwijderen? De declaratiegegevens blijven bewaard.')) return
+  return action(async () => {
+    const target = doc(db, 'profiles', trainer.id)
+    await runTransaction(db, async tx => {
+      const current = (await tx.get(target)).data()
+      if (current?.role !== 'trainer') throw { userMessage: 'Dit account kan niet als trainer worden verwijderd.' }
+      tx.update(target, { status: 'deleted' })
+    })
+    await refreshProfileLists()
+    if (uid.value === trainer.id) uid.value = declarationTrainers.value[0]?.id ?? ''
+    trainerDraft.value = null
+    navigate('trainers')
+    notice.value = 'Trainer verwijderd.'
+  }, 'De trainer kon niet worden verwijderd.')
 }
 const annualMonths = ref([])
 const annualYear = ref('')
@@ -916,11 +935,12 @@ function resetPassword() {
             <option v-for="level in 4" :key="level" :value="level">{{ level }}</option>
           </select></label>
           <label v-if="!trainerDraft.pending && trainerDraft.role === 'trainer'">Status<select v-model="trainerDraft.status">
-            <option value="active">Actief</option><option value="inactive">Inactief</option><option value="deleted">Verwijderd</option>
+            <option value="active">Actief</option><option value="inactive">Inactief</option>
           </select></label>
           <div class="form-actions">
             <button class="primary" :disabled="busy">{{ trainerDraft.pending ? 'Verifiëren' : 'Opslaan' }}</button>
-            <button type="button" class="secondary" :disabled="busy" @click="trainerDraft = null; navigate('trainers')">Terug naar Trainers</button>
+            <button type="button" class="secondary" :disabled="busy" @click="trainerDraft = null; navigate('trainers')">Annuleren</button>
+            <button v-if="trainerDraft.role === 'trainer'" type="button" class="link danger" :disabled="busy" @click="removeTrainer">Verwijderen</button>
           </div>
         </form>
       </section>
