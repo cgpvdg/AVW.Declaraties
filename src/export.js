@@ -12,15 +12,29 @@ export async function makeDeclaration(templateBytes, month, header, entries) {
   const serializer = new XMLSerializer()
   async function updateSheet(path, update) {
     const xml = parser.parseFromString(await zip.file(path).async('string'), 'application/xml')
+    if (xml.getElementsByTagName('parsererror').length) {
+      throw new Error('Het Excel-sjabloon bevat ongeldige XML (' + path + ').')
+    }
     const cells = new Map(Array.from(xml.getElementsByTagNameNS(ns, 'c'), c => [c.getAttribute('r'), c]))
     const rows = new Map(Array.from(xml.getElementsByTagNameNS(ns, 'row'), r => [r.getAttribute('r'), r]))
+    const sheetData = xml.getElementsByTagNameNS(ns, 'sheetData')[0]
+    if (!sheetData) throw new Error('De werkbladgegevens ontbreken in het Excel-sjabloon (' + path + ').')
     update((address, value, formula) => {
       let cell = cells.get(address)
       if (!cell) {
         const number = address.match(/\d+$/)[0]
         const column = address.replace(/\d/g, '')
-        const row = rows.get(number)
-        const next = Array.from(row.children).find(c => {
+        let row = rows.get(number)
+        if (!row) {
+          row = xml.createElementNS(ns, 'row')
+          row.setAttribute('r', number)
+          const nextRow = Array.from(sheetData.childNodes).find(node =>
+            node.nodeType === 1 && Number(node.getAttribute('r')) > Number(number))
+          sheetData.insertBefore(row, nextRow ?? null)
+          rows.set(number, row)
+        }
+        const next = Array.from(row.childNodes).find(c => {
+          if (c.nodeType !== 1 || !c.hasAttribute('r')) return false
           const col = c.getAttribute('r').replace(/\d/g, '')
           return col.length > column.length || (col.length === column.length && col > column)
         })
@@ -28,6 +42,7 @@ export async function makeDeclaration(templateBytes, month, header, entries) {
         cell.setAttribute('r', address)
         cell.setAttribute('s', cells.get('E' + number)?.getAttribute('s') ?? '24')
         row.insertBefore(cell, next ?? null)
+        cells.set(address, cell)
       }
       while (cell.firstChild) cell.removeChild(cell.firstChild)
       cell.removeAttribute('t')

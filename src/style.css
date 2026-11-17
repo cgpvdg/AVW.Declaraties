@@ -91,15 +91,14 @@ dialog::backdrop { background: #15292d80; }
 .notification-bell svg { transform-origin: 50% 15%; animation: notification-ring 10s ease-in-out infinite; }
 .notification-menu .notification-bell { animation: notification-highlight 10s ease-in-out infinite; }
 @keyframes notification-highlight {
-  0%, 92%, 100% { background-color: white; }
-  96% { background-color: #f8a3a3; }
+  0%, 20%, 100% { background-color: white; }
+  5%, 15% { background-color: #f8a3a3; }
 }
 @keyframes notification-ring {
-  0%, 92%, 100% { transform: rotate(0deg); }
-  93%, 95% { transform: rotate(-12deg); }
-  94%, 96% { transform: rotate(12deg); }
-  97% { transform: rotate(-6deg); }
-  98% { transform: rotate(6deg); }
+  0%, 20%, 100% { transform: rotate(0deg); }
+  2.5%, 7.5%, 12.5% { transform: rotate(-12deg); }
+  5%, 10%, 15% { transform: rotate(12deg); }
+  17.5% { transform: rotate(-6deg); }
 }
 @media (prefers-reduced-motion: reduce) {
   .notification-bell svg { animation: none; }
