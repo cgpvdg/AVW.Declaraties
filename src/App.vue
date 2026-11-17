@@ -57,7 +57,7 @@ const monthNotifications = ref([])
 const notifications = computed(() => [
   ...administratorNotifications.value,
   ...(!isAdmin.value && canReviewOccurrences.value && pendingOccurrences.value.length ? [{
-    id: 'recurring', destination: 'notifications',
+    id: 'recurring', destination: 'notifications', icon: 'recurring',
     label: pendingOccurrences.value.length + ' declaraties accorderen',
   }] : []),
   ...monthNotifications.value,
@@ -88,7 +88,7 @@ async function refreshMonthNotifications() {
         if (!admin && (await getDocs(collection(item.ref, 'entries'))).empty) return null
         const caption = monthLabel.format(new Date(item.id + '-01T00:00:00Z'))
         return {
-          id: owner.id + '-' + item.id, owner: owner.id, period: item.id, destination: 'declarations',
+          id: owner.id + '-' + item.id, owner: owner.id, period: item.id, destination: 'declarations', icon: 'declarations',
           label: admin ? fullProfileName(owner) + ' · ' + caption + ' beoordelen' : caption + ' indienen',
         }
       }))
@@ -100,7 +100,7 @@ async function refreshMonthNotifications() {
       const counts = new Map()
       for (const item of items) counts.set(item.period, (counts.get(item.period) ?? 0) + 1)
       items = [...counts].map(([period, count]) => ({
-        id: period, period, destination: 'overview',
+        id: period, period, destination: 'overview', icon: 'declarations',
         label: count + (count === 1 ? ' declaratie van ' : ' declaraties van ') +
           monthLabel.format(new Date(period + '-01T00:00:00Z')) + ' beoordelen',
       }))
@@ -115,6 +115,7 @@ const administratorNotifications = computed(() => {
   const count = trainers.value.filter(trainer => trainer.status === 'pending').length
   return count ? [{
     id: 'pending-trainers',
+    icon: 'trainers',
     destination: 'trainers',
     label: count === 1 ? '1 nieuwe trainer verifiëren' : count + ' nieuwe trainers verifiëren',
   }] : []
@@ -886,7 +887,8 @@ function resetPassword() {
         <nav class="notification-items" aria-label="Meldingen">
           <button v-for="notification in notifications" :key="notification.id" type="button"
             class="secondary" :disabled="busy" @click="openNotification(notification)">
-            {{ notification.label }}
+            <NavigationIcon :name="notification.icon" />
+            <span>{{ notification.label }}</span>
           </button>
         </nav>
       </details>

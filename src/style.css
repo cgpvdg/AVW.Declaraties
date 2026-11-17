@@ -112,7 +112,8 @@ dialog::backdrop { background: #15292d80; }
 .notification-backdrop { position: fixed; inset: 0; z-index: 3; }
 .notification-items { position: absolute; top: calc(100% + 8px); right: 0; z-index: 4; width: min(300px, calc(100vw - 90px)); display: grid; gap: 4px; padding: 8px; background: white; border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 4px 16px #15292d22; }
 .notification-items { max-height: min(420px, calc(100dvh - 80px)); overflow-y: auto; overscroll-behavior: contain; }
-.notification-items button { text-align: left; flex-shrink: 0; }
+.notification-items button { display: flex; align-items: center; gap: 10px; text-align: left; }
+.notification-items button svg { flex: none; }
 .occurrence-list { display: grid; gap: 12px; }
 .occurrence-row { display: grid; gap: 8px; }
 .occurrence-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
@@ -129,7 +130,7 @@ dialog::backdrop { background: #15292d80; }
 .menu-links button svg { flex: none; }
 .menu-links button:hover, .menu-links [aria-current="page"] { background: #e8eff9; }
 
-.header-menu summary { justify-content: center; min-width: 44px; }
+.header-menu summary, .notification-menu summary { justify-content: center; width: 48px; height: 48px; min-width: 48px; min-height: 48px; padding: 0; }
 .header-menu[open] summary { position: relative; z-index: 6; background: white; }
 .menu-backdrop { position: fixed; z-index: 5; inset: 0; background: #15292d66; }
 .menu-bottom { display: flex; flex-direction: column; gap: 4px; margin-top: auto; }
